@@ -5,6 +5,13 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trai
 import evaluate
 import numpy as np
 from tqdm import tqdm
+import sys
+import os
+
+# Add the root directory to the Python path
+root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(root_dir)
+
 from utils.text_extractor import ProtocolTextExtractor
 from models.pubmedbert_classifier import ProtocolDataset
 from models.baseline_classifiers import BaselineClassifiers
@@ -19,7 +26,8 @@ def prepare_datasets(base_dir: str, extractor: ProtocolTextExtractor):
         data = []
 
         # Process cancer protocols
-        cancer_files = list(Path(base_dir) / 'cancer' / split / '*.pdf')
+        cancer_dir = Path(base_dir) / 'cancer' / split
+        cancer_files = list(cancer_dir.glob('*.pdf'))  # Fixed: Using glob() method
         for pdf_path in tqdm(cancer_files, desc=f"Processing cancer protocols ({split})"):
             result = extractor.extract_from_pdf(pdf_path)
             if result["full_text"]:
@@ -30,7 +38,8 @@ def prepare_datasets(base_dir: str, extractor: ProtocolTextExtractor):
                 })
 
         # Process non-cancer protocols
-        non_cancer_files = list(Path(base_dir) / 'non_cancer' / split / '*.pdf')
+        non_cancer_dir = Path(base_dir) / 'non_cancer' / split
+        non_cancer_files = list(non_cancer_dir.glob('*.pdf'))  # Fixed: Using glob() method
         for pdf_path in tqdm(non_cancer_files, desc=f"Processing non-cancer protocols ({split})"):
             result = extractor.extract_from_pdf(pdf_path)
             if result["full_text"]:
@@ -42,8 +51,12 @@ def prepare_datasets(base_dir: str, extractor: ProtocolTextExtractor):
 
         datasets[split] = data
         print(f"{split} set size: {len(datasets[split])} protocols")
+        print(f"Class distribution in {split} set:")
+        labels = [d['label'] for d in data]
+        print(f"Cancer: {sum(labels)}, Non-cancer: {len(labels) - sum(labels)}")
 
     return datasets
+
 
 def compute_metrics(eval_pred):
     """Compute metrics for evaluation."""
@@ -60,7 +73,8 @@ def compute_metrics(eval_pred):
     return {
         'accuracy': metrics['accuracy'].compute(predictions=predictions, references=labels)['accuracy'],
         'f1': metrics['f1'].compute(predictions=predictions, references=labels, average='binary')['f1'],
-        'precision': metrics['precision'].compute(predictions=predictions, references=labels, average='binary')['precision'],
+        'precision': metrics['precision'].compute(predictions=predictions, references=labels, average='binary')[
+            'precision'],
         'recall': metrics['recall'].compute(predictions=predictions, references=labels, average='binary')['recall']
     }
 
@@ -75,9 +89,9 @@ def train_pubmedbert(base_dir: str, extractor: ProtocolTextExtractor):
     model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=2)
 
     # Prepare datasets
+    logging.info("Preparing datasets...")
     datasets = prepare_datasets(base_dir, extractor)
 
-    # Create datasets
     train_dataset = ProtocolDataset(
         texts=[d['text'] for d in datasets['train']],
         labels=[d['label'] for d in datasets['train']],
@@ -96,13 +110,13 @@ def train_pubmedbert(base_dir: str, extractor: ProtocolTextExtractor):
         tokenizer=tokenizer
     )
 
-    # Set up training arguments optimized for larger dataset
+    # Set up training arguments
     training_args = TrainingArguments(
         output_dir='./results',
         num_train_epochs=5,
         per_device_train_batch_size=4,
         per_device_eval_batch_size=4,
-        gradient_accumulation_steps=4,  # Effective batch size = 16
+        gradient_accumulation_steps=4,
         learning_rate=2e-5,
         warmup_ratio=0.1,
         weight_decay=0.01,
@@ -115,9 +129,9 @@ def train_pubmedbert(base_dir: str, extractor: ProtocolTextExtractor):
         load_best_model_at_end=True,
         metric_for_best_model="f1",
         report_to="tensorboard",
-        fp16=True,  # Mixed precision training
-        gradient_checkpointing=True,  # Memory optimization
-        save_total_limit=2,  # Keep only the last 2 checkpoints
+        fp16=True,
+        gradient_checkpointing=True,
+        save_total_limit=2,
     )
 
     # Initialize trainer
@@ -146,6 +160,7 @@ def train_pubmedbert(base_dir: str, extractor: ProtocolTextExtractor):
     test_results = trainer.evaluate(test_dataset)
 
     # Save evaluation results
+    os.makedirs("./protocol_classifier", exist_ok=True)
     with open('./protocol_classifier/eval_results.txt', 'w') as f:
         f.write("Validation Results:\n")
         for key, value in val_results.items():
@@ -155,14 +170,7 @@ def train_pubmedbert(base_dir: str, extractor: ProtocolTextExtractor):
             f.write(f"{key}: {value}\n")
 
     logging.info("Training completed!")
-
-    print("\nValidation Results:")
-    for key, value in val_results.items():
-        print(f"{key}: {value}")
-
-    print("\nTest Results:")
-    for key, value in test_results.items():
-        print(f"{key}: {value}")
+    return val_results, test_results
 
 
 def train_baseline_models(base_dir: str):
