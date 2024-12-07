@@ -9,8 +9,8 @@ This repository contains scripts for downloading and classifying clinical trial 
 
 1. Clone the repository:
 ```bash
-git clone [your-repo-url]
-cd [repo-name]
+git clone https://github.com/YOUR_USERNAME/study_classifier.git
+cd study_classifier
 ```
 
 2. Create a virtual environment (recommended):
@@ -24,6 +24,14 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+Key dependencies:
+- PyTorch >= 2.0.0
+- Transformers >= 4.30.0
+- PyMuPDF >= 1.22.0
+- scikit-learn >= 1.0.0
+- pandas >= 1.5.0
+- accelerate >= 0.26.0
+
 Note: The scripts are optimized for Apple M1 chips and will automatically use the appropriate device (MPS, CUDA, or CPU).
 
 ## Project Components
@@ -33,7 +41,7 @@ Note: The scripts are optimized for Apple M1 chips and will automatically use th
 Download and split clinical trial protocols:
 
 ```bash
-python download_protocols.py --target-size 1500
+python scripts/download_protocols.py --target-size 1500
 ```
 
 This will:
@@ -46,43 +54,58 @@ This will:
 Train the PubMedBERT classifier:
 
 ```bash
-python train_model.py
+python scripts/train_models.py
 ```
 
 Train the traditional ML baseline models:
 
 ```bash
-python baseline_classifiers.py --train --train-dir ./protocol_documents
+python scripts/classify_protocol.py --train --train-dir ./protocol_documents
 ```
 
 Note: The zero-shot classifier doesn't require training.
 
 ### 3. Classification
 
-You can use any of the three classification approaches:
+The classifier can process directories of cancer and non-cancer protocols:
 
-#### PubMedBERT Classifier
 ```bash
-python classify_protocol.py --input path/to/protocol.pdf
-python classify_protocol.py --input path/to/protocols/dir --output results.json
+python scripts/classify_protocol.py \
+    --cancer-dir path/to/cancer/protocols \
+    --non-cancer-dir path/to/non-cancer/protocols \
+    --output results.json
 ```
 
-#### Baseline Classifiers (Traditional ML and Zero-shot)
+Additional options:
 ```bash
-python baseline_classifiers.py --input path/to/protocol.pdf
-python baseline_classifiers.py --input path/to/protocols/dir --output results.json
+python scripts/classify_protocol.py \
+    --cancer-dir path/to/cancer/protocols \
+    --non-cancer-dir path/to/non-cancer/protocols \
+    --output results.json \
+    --max-length 8000 \
+    --pubmedbert-path ./protocol_classifier \
+    --baseline-path ./baseline_models
 ```
+
+The script will:
+- Process all PDFs in the specified directories
+- Run classification using both PubMedBERT and baseline models
+- Generate performance metrics and confusion matrices
+- Save detailed results and summary to the specified output file
 
 ## Directory Structure
 
 ```
 .
-├── download_protocols.py     # Data collection script
-├── train_model.py           # PubMedBERT training script
-├── classify_protocol.py     # PubMedBERT inference script
-├── baseline_classifiers.py  # Traditional ML and zero-shot classifiers
-├── requirements.txt
-├── protocol_documents/      # Downloaded protocols
+├── scripts/                # Main execution scripts
+│   ├── download_protocols.py  # Data collection script
+│   ├── train_models.py       # Model training script
+│   └── classify_protocol.py  # Protocol classification script
+├── models/                 # Model checkpoints and configurations
+├── logs/                  # Training and inference logs
+├── results/               # Classification results output
+├── utils/                 # Utility functions and helpers
+├── protocol_documents/    # Downloaded protocols
 │   ├── cancer/
 │   │   ├── train/
 │   │   ├── val/
@@ -91,11 +114,11 @@ python baseline_classifiers.py --input path/to/protocols/dir --output results.js
 │       ├── train/
 │       ├── val/
 │       └── test/
-├── protocol_classifier/     # PubMedBERT model outputs
+├── protocol_classifier/   # PubMedBERT model outputs
 │   ├── pytorch_model.bin
 │   ├── config.json
 │   └── eval_results.txt
-└── baseline_models/        # Traditional ML model outputs
+└── baseline_models/      # Traditional ML model outputs
     ├── tfidf.joblib
     ├── logistic_regression.joblib
     └── svm.joblib
@@ -129,30 +152,44 @@ python baseline_classifiers.py --input path/to/protocols/dir --output results.js
 - The traditional ML models provide a good balance of speed and accuracy
 - The zero-shot classifier is useful for quick experimentation without training
 
-## Output Formats
+## Output Format
 
-### PubMedBERT Classifier
+The output JSON file contains both individual results and performance summary:
+
 ```json
 {
-    "file_name": "protocol.pdf",
-    "classification": "cancer",
-    "confidence": 95.67
-}
-```
-
-### Baseline Classifiers
-```json
-{
-    "file_name": "protocol.pdf",
-    "traditional_ml": {
-        "log_reg_prediction": "cancer",
-        "log_reg_confidence": 95.67,
-        "svm_prediction": "cancer",
-        "svm_confidence": 93.45
-    },
-    "zero_shot": {
-        "prediction": "cancer",
-        "confidence": 87.23
+    "results": [
+        {
+            "file_name": "protocol.pdf",
+            "true_label": "cancer",
+            "predictions": {
+                "pubmedbert": {
+                    "prediction": "cancer",
+                    "confidence": 0.95
+                },
+                "baseline": {
+                    "prediction": "cancer",
+                    "confidence": 0.92
+                }
+            }
+        }
+    ],
+    "summary": {
+        "accuracy": {
+            "pubmedbert": 0.94,
+            "baseline": 0.91
+        },
+        "precision": {
+            "pubmedbert": 0.93,
+            "baseline": 0.90
+        },
+        "recall": {
+            "pubmedbert": 0.95,
+            "baseline": 0.92
+        },
+        "f1": {
+            "pubmedbert": 0.94,
+            "baseline": 0.91
+        }
     }
 }
-```
