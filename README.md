@@ -65,7 +65,35 @@ python scripts/classify_protocol.py --train --train-dir ./protocol_documents
 
 Note: The zero-shot classifier doesn't require training.
 
-### 3. Classification
+### 3. Model Evaluation
+
+Evaluate model performance on test data:
+
+```bash
+python scripts/evaluate_models.py \
+    --cancer-dir path/to/cancer/protocols \
+    --non-cancer-dir path/to/non-cancer/protocols \
+    --output results.json
+```
+
+Additional evaluation options:
+```bash
+python scripts/evaluate_models.py \
+    --cancer-dir path/to/cancer/protocols \
+    --non-cancer-dir path/to/non-cancer/protocols \
+    --output results.json \
+    --max-length 8000 \
+    --pubmedbert-path ./protocol_classifier \
+    --baseline-path ./baseline_models
+```
+
+The evaluation script will:
+- Process all PDFs in the specified directories
+- Run classification using both PubMedBERT and baseline models
+- Generate performance metrics and confusion matrices
+- Save detailed results and summary to the specified output file
+
+### 4. Classification
 
 The classifier can process directories of cancer and non-cancer protocols:
 
@@ -93,6 +121,33 @@ The script will:
 - Generate performance metrics and confusion matrices
 - Save detailed results and summary to the specified output file
 
+### 5. Making Predictions
+
+To predict cancer relevance for new protocols:
+
+```bash
+# Predict for a single PDF
+python scripts/predict.py path/to/protocol.pdf --output prediction.json
+
+# Predict for a directory of PDFs
+python scripts/predict.py path/to/protocols/dir --output predictions.json
+```
+
+Additional prediction options:
+```bash
+python scripts/predict.py \
+    path/to/input \
+    --model-path ./protocol_classifier \
+    --max-length 8000 \
+    --output predictions.json
+```
+
+The prediction script will:
+- Load the trained PubMedBERT model
+- Process the input PDF(s)
+- Output predictions with confidence scores
+- Optionally save results to a JSON file
+
 ## Directory Structure
 
 ```
@@ -100,7 +155,9 @@ The script will:
 ├── scripts/                # Main execution scripts
 │   ├── download_protocols.py  # Data collection script
 │   ├── train_models.py       # Model training script
-│   └── classify_protocol.py  # Protocol classification script
+│   ├── classify_protocol.py  # Protocol classification script
+│   ├── evaluate_models.py    # Model evaluation script
+│   └── predict.py            # Prediction script
 ├── models/                 # Model checkpoints and configurations
 ├── logs/                  # Training and inference logs
 ├── results/               # Classification results output
