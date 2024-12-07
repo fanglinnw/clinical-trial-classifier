@@ -8,7 +8,6 @@ from tqdm import tqdm
 import sys
 import os
 
-# Add the root directory to the Python path
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(root_dir)
 
@@ -27,7 +26,7 @@ def prepare_datasets(base_dir: str, extractor: ProtocolTextExtractor):
 
         # Process cancer protocols
         cancer_dir = Path(base_dir) / 'cancer' / split
-        cancer_files = list(cancer_dir.glob('*.pdf'))  # Fixed: Using glob() method
+        cancer_files = list(cancer_dir.glob('*.pdf'))
         for pdf_path in tqdm(cancer_files, desc=f"Processing cancer protocols ({split})"):
             result = extractor.extract_from_pdf(pdf_path)
             if result["full_text"]:
@@ -39,7 +38,7 @@ def prepare_datasets(base_dir: str, extractor: ProtocolTextExtractor):
 
         # Process non-cancer protocols
         non_cancer_dir = Path(base_dir) / 'non_cancer' / split
-        non_cancer_files = list(non_cancer_dir.glob('*.pdf'))  # Fixed: Using glob() method
+        non_cancer_files = list(non_cancer_dir.glob('*.pdf'))
         for pdf_path in tqdm(non_cancer_files, desc=f"Processing non-cancer protocols ({split})"):
             result = extractor.extract_from_pdf(pdf_path)
             if result["full_text"]:
@@ -110,6 +109,9 @@ def train_pubmedbert(base_dir: str, extractor: ProtocolTextExtractor):
         tokenizer=tokenizer
     )
 
+    # Detect device type
+    device_type = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+
     # Set up training arguments
     training_args = TrainingArguments(
         output_dir='./results',
@@ -129,7 +131,8 @@ def train_pubmedbert(base_dir: str, extractor: ProtocolTextExtractor):
         load_best_model_at_end=True,
         metric_for_best_model="f1",
         report_to="tensorboard",
-        fp16=True,
+        # Only enable fp16 on CUDA devices
+        fp16=device_type == 'cuda',
         gradient_checkpointing=True,
         save_total_limit=2,
     )
