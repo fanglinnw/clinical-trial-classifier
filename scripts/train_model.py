@@ -1,92 +1,49 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
-from pathlib import Path
-import pandas as pd
-import numpy as np
-import evaluate
 import logging
-import fitz
-import gc
+import torch
+from pathlib import Path
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
+import evaluate
+import numpy as np
 from tqdm import tqdm
+from utils.text_extractor import ProtocolTextExtractor
+from models.pubmedbert_classifier import ProtocolDataset
+from models.baseline_classifiers import BaselineClassifiers
 
 
-class ProtocolDataset(Dataset):
-    def __init__(self, texts, labels, tokenizer, max_length=512):
-        self.encodings = tokenizer(texts, truncation=True, padding=True, max_length=max_length)
-        self.labels = labels
-
-    def __getitem__(self, idx):
-        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
-        item['labels'] = torch.tensor(self.labels[idx])
-        return item
-
-    def __len__(self):
-        return len(self.labels)
-
-
-def extract_text_from_pdf(pdf_path, max_length=4000):
-    """Extract and truncate text from a PDF file."""
-    try:
-        doc = fitz.open(pdf_path)
-        text = ""
-        for page in doc:
-            text += page.get_text()
-        if len(text) > max_length:
-            text = ' '.join(text[:max_length].split()[:-1])
-        return text.strip()
-    except Exception as e:
-        logging.error(f"Error processing {pdf_path}: {e}")
-        return ""
-    finally:
-        if 'doc' in locals():
-            doc.close()
-        gc.collect()  # Help manage memory for large datasets
-
-
-def prepare_split_datasets(base_dir):
+def prepare_datasets(base_dir: str, extractor: ProtocolTextExtractor):
     """Prepare datasets from train/val/test splits."""
     splits = ['train', 'val', 'test']
     datasets = {}
-    
+
     for split in splits:
         data = []
-        
-        # Process cancer protocols
-        cancer_files = list(Path(base_dir) / 'cancer' / split / '*.pdf')
-        non_cancer_files = list(Path(base_dir) / 'non_cancer' / split / '*.pdf')
 
         # Process cancer protocols
+        cancer_files = list(Path(base_dir) / 'cancer' / split / '*.pdf')
         for pdf_path in tqdm(cancer_files, desc=f"Processing cancer protocols ({split})"):
-            text = extract_text_from_pdf(pdf_path)
-            if text:
+            result = extractor.extract_from_pdf(pdf_path)
+            if result["full_text"]:
                 data.append({
-                    'text': text,
+                    'text': result["full_text"],
                     'label': 1,
                     'file_name': pdf_path.name
                 })
-            gc.collect()  # Regular memory cleanup
 
         # Process non-cancer protocols
+        non_cancer_files = list(Path(base_dir) / 'non_cancer' / split / '*.pdf')
         for pdf_path in tqdm(non_cancer_files, desc=f"Processing non-cancer protocols ({split})"):
-            text = extract_text_from_pdf(pdf_path)
-            if text:
+            result = extractor.extract_from_pdf(pdf_path)
+            if result["full_text"]:
                 data.append({
-                    'text': text,
+                    'text': result["full_text"],
                     'label': 0,
                     'file_name': pdf_path.name
                 })
-            gc.collect()  # Regular memory cleanup
 
-        datasets[split] = pd.DataFrame(data)
+        datasets[split] = data
         print(f"{split} set size: {len(datasets[split])} protocols")
-        print(f"Class distribution in {split} set:")
-        print(datasets[split]['label'].value_counts())
-        
-        gc.collect()  # Clean up after creating DataFrame
-    
-    return datasets
 
+    return datasets
 
 def compute_metrics(eval_pred):
     """Compute metrics for evaluation."""
@@ -108,9 +65,9 @@ def compute_metrics(eval_pred):
     }
 
 
-def train_model():
-    # Set up logging
-    logging.basicConfig(level=logging.INFO)
+def train_pubmedbert(base_dir: str, extractor: ProtocolTextExtractor):
+    """Train PubMedBERT classifier."""
+    logging.info("Training PubMedBERT classifier...")
 
     # Initialize tokenizer and model
     model_name = "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext"
@@ -118,25 +75,24 @@ def train_model():
     model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=2)
 
     # Prepare datasets
-    logging.info("Preparing datasets...")
-    datasets = prepare_split_datasets(base_dir='./protocol_documents')
+    datasets = prepare_datasets(base_dir, extractor)
 
     # Create datasets
     train_dataset = ProtocolDataset(
-        texts=datasets['train']['text'].tolist(),
-        labels=datasets['train']['label'].tolist(),
+        texts=[d['text'] for d in datasets['train']],
+        labels=[d['label'] for d in datasets['train']],
         tokenizer=tokenizer
     )
 
     val_dataset = ProtocolDataset(
-        texts=datasets['val']['text'].tolist(),
-        labels=datasets['val']['label'].tolist(),
+        texts=[d['text'] for d in datasets['val']],
+        labels=[d['label'] for d in datasets['val']],
         tokenizer=tokenizer
     )
 
     test_dataset = ProtocolDataset(
-        texts=datasets['test']['text'].tolist(),
-        labels=datasets['test']['label'].tolist(),
+        texts=[d['text'] for d in datasets['test']],
+        labels=[d['label'] for d in datasets['test']],
         tokenizer=tokenizer
     )
 
@@ -184,7 +140,7 @@ def train_model():
     # Evaluate on validation set
     logging.info("Evaluating on validation set...")
     val_results = trainer.evaluate()
-    
+
     # Evaluate on test set
     logging.info("Evaluating on test set...")
     test_results = trainer.evaluate(test_dataset)
@@ -199,16 +155,37 @@ def train_model():
             f.write(f"{key}: {value}\n")
 
     logging.info("Training completed!")
-    return val_results, test_results
 
-
-if __name__ == "__main__":
-    val_results, test_results = train_model()
-    
     print("\nValidation Results:")
     for key, value in val_results.items():
         print(f"{key}: {value}")
-        
+
     print("\nTest Results:")
     for key, value in test_results.items():
         print(f"{key}: {value}")
+
+
+def train_baseline_models(base_dir: str):
+    """Train baseline models."""
+    logging.info("Training baseline models...")
+    baseline_classifiers = BaselineClassifiers()
+    baseline_classifiers.train_traditional_models(base_dir)
+    return baseline_classifiers
+
+
+def main():
+    logging.basicConfig(level=logging.INFO)
+    base_dir = "./protocol_documents"
+
+    # Initialize text extractor
+    extractor = ProtocolTextExtractor(max_length=8000)
+
+    # Train PubMedBERT
+    train_pubmedbert(base_dir, extractor)
+
+    # Train baseline models
+    train_baseline_models(base_dir)
+
+
+if __name__ == "__main__":
+    main()
