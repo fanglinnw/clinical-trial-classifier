@@ -1,44 +1,16 @@
 # Clinical Trial Protocol Classifier
 
-This repository contains a comprehensive system for downloading, processing, and classifying clinical trial protocols from ClinicalTrials.gov. It implements multiple classification approaches and provides a unified interface for comparison.
+This repository contains scripts for downloading and classifying clinical trial protocols from ClinicalTrials.gov. It implements three different classification approaches:
+1. Fine-tuned PubMedBERT (optimized for medical text)
+2. Traditional ML baselines (TF-IDF with Logistic Regression and SVM)
+3. Zero-shot classification using RoBERTa-MNLI
 
-## Features
-
-- Multiple classification approaches:
-  - Fine-tuned PubMedBERT (optimized for medical text)
-  - Traditional ML (TF-IDF with Logistic Regression and SVM)
-  - Zero-shot classification using BART-MNLI
-- Centralized text extraction and processing
-- Support for both individual and batch processing
-- Optimized for Apple M1/M2 chips and CUDA devices
-- Comprehensive evaluation metrics
-
-## Project Structure
-
-```
-clinical-trial-classifier/
-├── utils/
-│   ├── __init__.py
-│   └── text_extractor.py          # Centralized text extraction
-├── models/
-│   ├── __init__.py
-│   ├── pubmedbert_classifier.py   # Fine-tuned BERT classifier
-│   └── baseline_classifiers.py    # Traditional ML and zero-shot
-├── scripts/
-│   ├── download_protocols.py      # Data collection
-│   ├── train_models.py           # Model training
-│   └── classify_protocol.py      # Unified inference
-├── requirements.txt
-├── README.md
-└── LICENSE
-```
-
-## Installation
+## Setup
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/fanglinnw/clinical-trial-classifier.git
-cd clinical-trial-classifier
+git clone [your-repo-url]
+cd [repo-name]
 ```
 
 2. Create a virtual environment (recommended):
@@ -52,14 +24,16 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## Usage
+Note: The scripts are optimized for Apple M1 chips and will automatically use the appropriate device (MPS, CUDA, or CPU).
 
-### 1. Download Protocols
+## Project Components
 
-Download and split clinical trial protocols into train/val/test sets:
+### 1. Data Collection
+
+Download and split clinical trial protocols:
 
 ```bash
-python scripts/download_protocols.py --target-size 1500
+python download_protocols.py --target-size 1500
 ```
 
 This will:
@@ -67,82 +41,48 @@ This will:
 - Split them into train (70%), validation (15%), and test (15%) sets
 - Organize them in the appropriate directories
 
-### 2. Train Models
+### 2. Model Training
 
-Train all classifiers:
-
-```bash
-python scripts/train_models.py
-```
-
-This trains:
-- PubMedBERT classifier
-- Traditional ML models (TF-IDF + LogisticRegression/SVM)
-- Zero-shot classifier (no training required)
-
-### 3. Classify Protocols
-
-Use the unified classifier interface:
+Train the PubMedBERT classifier:
 
 ```bash
-# Classify single PDF with all models
-python scripts/classify_protocol.py --input protocol.pdf
-
-# Batch classify directory
-python scripts/classify_protocol.py --input protocols_dir/ --output results.json
-
-# Adjust text processing length
-python scripts/classify_protocol.py --input protocol.pdf --max-length 10000
+python train_model.py
 ```
 
-## Output Format
+Train the traditional ML baseline models:
 
-The classifier produces structured JSON output:
-
-```json
-{
-    "file_name": "protocol.pdf",
-    "pubmedbert": {
-        "classification": "cancer",
-        "confidence": 95.67
-    },
-    "traditional_ml": {
-        "log_reg_prediction": "cancer",
-        "log_reg_confidence": 92.45,
-        "svm_prediction": "cancer",
-        "svm_confidence": 90.32
-    },
-    "zero_shot": {
-        "prediction": "cancer",
-        "confidence": 87.65
-    }
-}
+```bash
+python baseline_classifiers.py --train --train-dir ./protocol_documents
 ```
 
-## Model Details
+Note: The zero-shot classifier doesn't require training.
 
-### PubMedBERT Classifier
-- Fine-tuned on medical text
-- Best performance for medical domain
-- GPU/MPS accelerated when available
+### 3. Classification
 
-### Traditional ML Baseline
-- TF-IDF vectorization
-- Logistic Regression and SVM classifiers
-- Faster training and inference
-- Good baseline performance
+You can use any of the three classification approaches:
 
-### Zero-shot Classifier
-- Uses BART-MNLI model
-- No training required
-- Flexible for new categories
-- Good for prototyping
+#### PubMedBERT Classifier
+```bash
+python classify_protocol.py --input path/to/protocol.pdf
+python classify_protocol.py --input path/to/protocols/dir --output results.json
+```
 
-## Directory Structure After Training
+#### Baseline Classifiers (Traditional ML and Zero-shot)
+```bash
+python baseline_classifiers.py --input path/to/protocol.pdf
+python baseline_classifiers.py --input path/to/protocols/dir --output results.json
+```
+
+## Directory Structure
 
 ```
-clinical-trial-classifier/
-├── protocol_documents/         # Downloaded protocols
+.
+├── download_protocols.py     # Data collection script
+├── train_model.py           # PubMedBERT training script
+├── classify_protocol.py     # PubMedBERT inference script
+├── baseline_classifiers.py  # Traditional ML and zero-shot classifiers
+├── requirements.txt
+├── protocol_documents/      # Downloaded protocols
 │   ├── cancer/
 │   │   ├── train/
 │   │   ├── val/
@@ -151,38 +91,68 @@ clinical-trial-classifier/
 │       ├── train/
 │       ├── val/
 │       └── test/
-├── protocol_classifier/        # PubMedBERT model
+├── protocol_classifier/     # PubMedBERT model outputs
 │   ├── pytorch_model.bin
 │   ├── config.json
 │   └── eval_results.txt
-└── baseline_models/           # Traditional ML models
+└── baseline_models/        # Traditional ML model outputs
     ├── tfidf.joblib
     ├── logistic_regression.joblib
     └── svm.joblib
 ```
 
+## Model Details
+
+1. **PubMedBERT Classifier**
+   - Fine-tuned on medical text
+   - Optimized for clinical trial protocols
+   - Best performance but requires training
+   - GPU/MPS accelerated when available
+
+2. **Traditional ML Baseline**
+   - TF-IDF vectorization with Logistic Regression and SVM
+   - Faster training and inference
+   - Lighter resource requirements
+   - Good baseline performance
+
+3. **Zero-shot Classifier**
+   - Uses RoBERTa-MNLI model
+   - No training required
+   - Can adapt to new categories
+   - Useful for quick prototyping
+
 ## Notes
 
 - The download script includes appropriate delays to respect ClinicalTrials.gov's servers
-- Text extraction is limited to 8000 characters by default (configurable)
-- All models are optimized for Apple M1/M2 chips and will automatically use appropriate acceleration
-- The zero-shot classifier can be used immediately without training
-- Results can be exported to JSON for further analysis
+- All models are optimized for Apple M1 chips and will automatically use the appropriate device
+- Training the PubMedBERT model requires significant computational resources
+- The traditional ML models provide a good balance of speed and accuracy
+- The zero-shot classifier is useful for quick experimentation without training
 
-## Hardware Requirements
+## Output Formats
 
-- Minimum: 8GB RAM, multicore CPU
-- Recommended: 16GB RAM, GPU or Apple M1/M2 chip
-- Storage: ~5GB for full dataset and models
+### PubMedBERT Classifier
+```json
+{
+    "file_name": "protocol.pdf",
+    "classification": "cancer",
+    "confidence": 95.67
+}
+```
 
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+### Baseline Classifiers
+```json
+{
+    "file_name": "protocol.pdf",
+    "traditional_ml": {
+        "log_reg_prediction": "cancer",
+        "log_reg_confidence": 95.67,
+        "svm_prediction": "cancer",
+        "svm_confidence": 93.45
+    },
+    "zero_shot": {
+        "prediction": "cancer",
+        "confidence": 87.23
+    }
+}
+```
