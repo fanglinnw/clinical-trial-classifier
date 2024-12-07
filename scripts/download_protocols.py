@@ -187,7 +187,7 @@ def main():
     if sum(split_ratios) != 1.0:
         raise ValueError("Split ratios must sum to 1.0")
 
-    base_dir = "protocol_documents"
+    base_dir = "../protocol_documents"
     os.makedirs(base_dir, exist_ok=True)
     api = ClinicalTrialsAPI()
 
