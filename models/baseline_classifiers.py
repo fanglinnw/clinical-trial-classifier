@@ -36,7 +36,7 @@ class BaselineClassifiers:
         self.logger.info("Loading zero-shot classifier...")
         self.zero_shot = pipeline(
             "zero-shot-classification",
-            model="facebook/bart-large-mnli",
+            model="FacebookAI/roberta-large-mnli",
             device=self.device
         )
         
@@ -131,10 +131,13 @@ class BaselineClassifiers:
 
     def _classify_zero_shot(self, text: str) -> Dict[str, Union[str, float]]:
         """Get prediction from zero-shot classifier."""
-        candidate_labels = ["cancer clinical trial", "non-cancer clinical trial"]
-        result = self.zero_shot(text, candidate_labels, multi_label=False)
+        # candidate_labels = ["cancer clinical trial", "non-cancer clinical trial"]
+        # candidate_labels = ["cancer research protocol", "non-cancer clinical trial protocol"]
+        result = self.zero_shot(text, candidate_labels=["cancer research protocol",
+                                          "non-cancer clinical trial protocol"],
+                        hypothesis_template="This document describes a {}.")
         
-        prediction = "cancer" if result['labels'][0] == "cancer clinical trial" else "non-cancer"
+        prediction = "cancer" if result['labels'][0] == "cancer research protocol" else "non-cancer"
         confidence = round(result['scores'][0] * 100, 2)
         
         return {
