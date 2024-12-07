@@ -8,7 +8,7 @@ import sys
 import os
 import numpy as np
 from tabulate import tabulate
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(root_dir)
@@ -23,11 +23,6 @@ class ProtocolClassifierEnsemble:
                  max_length: int = 8000):
         """
         Initialize ensemble of classifiers.
-
-        Args:
-            pubmedbert_path: Path to PubMedBERT model
-            baseline_path: Path to baseline models
-            max_length: Maximum text length to process
         """
         self.logger = logging.getLogger(__name__)
 
@@ -52,19 +47,15 @@ class ProtocolClassifierEnsemble:
             self.baseline = None
             self.logger.error(f"Failed to load baseline classifiers: {e}")
 
-    def classify_pdf(self, pdf_path: Union[str, Path]) -> Dict:
+    def classify_pdf(self, pdf_path: Union[str, Path], true_label: str = None) -> Dict:
         """
         Classify a single PDF using all available models.
-
-        Args:
-            pdf_path: Path to the PDF file
-
-        Returns:
-            Dictionary containing classifications from all models
         """
-        results = {"file_name": str(pdf_path)}
+        results = {
+            "file_name": str(pdf_path),
+            "true_label": true_label
+        }
 
-        # Get PubMedBERT prediction
         if self.pubmedbert:
             try:
                 pubmedbert_result = self.pubmedbert.classify_pdf(pdf_path)
@@ -76,7 +67,6 @@ class ProtocolClassifierEnsemble:
                 self.logger.error(f"PubMedBERT classification failed: {e}")
                 results["pubmedbert"] = {"error": str(e)}
 
-        # Get baseline predictions
         if self.baseline:
             try:
                 baseline_result = self.baseline.classify_pdf(pdf_path)
@@ -88,184 +78,140 @@ class ProtocolClassifierEnsemble:
 
         return results
 
-    def batch_classify_pdfs(self, pdf_dir: Union[str, Path]) -> List[Dict]:
+    def process_protocol_directories(self, cancer_dir: Union[str, Path], non_cancer_dir: Union[str, Path]) -> List[
+        Dict]:
         """
-        Classify all PDFs in a directory.
-
-        Args:
-            pdf_dir: Directory containing PDF files
-
-        Returns:
-            List of dictionaries containing classifications for each PDF
+        Process all PDFs in cancer and non-cancer directories.
         """
-        pdf_dir = Path(pdf_dir)
         results = []
 
-        pdf_files = list(pdf_dir.glob("**/*.pdf"))
-        self.logger.info(f"Found {len(pdf_files)} PDF files in {pdf_dir}")
+        # Process cancer protocols
+        cancer_dir = Path(cancer_dir)
+        cancer_pdfs = list(cancer_dir.glob("**/*.pdf"))
+        self.logger.info(f"Found {len(cancer_pdfs)} cancer protocol PDFs in {cancer_dir}")
+        for pdf_path in cancer_pdfs:
+            result = self.classify_pdf(pdf_path, true_label="cancer")
+            results.append(result)
 
-        for pdf_path in pdf_files:
-            result = self.classify_pdf(pdf_path)
+        # Process non-cancer protocols
+        non_cancer_dir = Path(non_cancer_dir)
+        non_cancer_pdfs = list(non_cancer_dir.glob("**/*.pdf"))
+        self.logger.info(f"Found {len(non_cancer_pdfs)} non-cancer protocol PDFs in {non_cancer_dir}")
+        for pdf_path in non_cancer_pdfs:
+            result = self.classify_pdf(pdf_path, true_label="non-cancer")
             results.append(result)
 
         return results
 
-    def generate_performance_summary(self, results: List[Dict], ground_truth: str = None) -> Dict:
+    def generate_performance_summary(self, results: List[Dict]) -> Dict:
         """
-        Generate a comprehensive summary of model performance.
-
-        Args:
-            results: List of classification results
-            ground_truth: Expected classification label for all documents ("cancer" or "non-cancer")
-
-        Returns:
-            Dictionary containing performance metrics
+        Generate comprehensive performance metrics for all models.
         """
         summary = {
             "total_documents": len(results),
-            "model_predictions": {},
+            "model_metrics": {},
             "confidence_stats": {},
-            "agreement_analysis": {},
+            "confusion_matrices": {},
             "error_rates": {}
         }
 
-        if ground_truth:
-            summary["ground_truth_evaluation"] = {}
-
-        # Initialize counters
-        predictions = {
-            "pubmedbert": [],
-            "log_reg": [],
-            "svm": [],
-            "zero_shot": []
-        }
-        confidences = {
-            "pubmedbert": [],
-            "log_reg": [],
-            "svm": [],
-            "zero_shot": []
-        }
-        errors = {
-            "pubmedbert": 0,
-            "traditional_ml": 0,
-            "zero_shot": 0
+        # Initialize data structures for predictions and true labels
+        model_data = {
+            "pubmedbert": {"preds": [], "conf": [], "true": [], "errors": 0},
+            "log_reg": {"preds": [], "conf": [], "true": [], "errors": 0},
+            "svm": {"preds": [], "conf": [], "true": [], "errors": 0},
+            "zero_shot": {"preds": [], "conf": [], "true": [], "errors": 0}
         }
 
         # Collect predictions and confidences
         for result in results:
-            if "pubmedbert" in result and "error" not in result["pubmedbert"]:
-                predictions["pubmedbert"].append(result["pubmedbert"]["classification"])
-                confidences["pubmedbert"].append(result["pubmedbert"]["confidence"])
-            else:
-                errors["pubmedbert"] += 1
+            true_label = result["true_label"]
 
+            # PubMedBERT
+            if "pubmedbert" in result and "error" not in result["pubmedbert"]:
+                pub = result["pubmedbert"]
+                model_data["pubmedbert"]["preds"].append(pub["classification"])
+                model_data["pubmedbert"]["conf"].append(pub["confidence"])
+                model_data["pubmedbert"]["true"].append(true_label)
+            else:
+                model_data["pubmedbert"]["errors"] += 1
+
+            # Traditional ML
             if "traditional_ml" in result and "error" not in result["traditional_ml"]:
                 trad = result["traditional_ml"]
-                predictions["log_reg"].append(trad.get("log_reg_prediction", ""))
-                predictions["svm"].append(trad.get("svm_prediction", ""))
-                confidences["log_reg"].append(trad.get("log_reg_confidence", 0))
-                confidences["svm"].append(trad.get("svm_confidence", 0))
-            else:
-                errors["traditional_ml"] += 1
 
+                # Logistic Regression
+                if "log_reg_prediction" in trad:
+                    model_data["log_reg"]["preds"].append(trad["log_reg_prediction"])
+                    model_data["log_reg"]["conf"].append(trad["log_reg_confidence"])
+                    model_data["log_reg"]["true"].append(true_label)
+                else:
+                    model_data["log_reg"]["errors"] += 1
+
+                # SVM
+                if "svm_prediction" in trad:
+                    model_data["svm"]["preds"].append(trad["svm_prediction"])
+                    model_data["svm"]["conf"].append(trad["svm_confidence"])
+                    model_data["svm"]["true"].append(true_label)
+                else:
+                    model_data["svm"]["errors"] += 1
+            else:
+                model_data["log_reg"]["errors"] += 1
+                model_data["svm"]["errors"] += 1
+
+            # Zero-shot
             if "zero_shot" in result and "error" not in result["zero_shot"]:
                 zero = result["zero_shot"]
-                predictions["zero_shot"].append(zero["prediction"])
-                confidences["zero_shot"].append(zero["confidence"])
+                model_data["zero_shot"]["preds"].append(zero["prediction"])
+                model_data["zero_shot"]["conf"].append(zero["confidence"])
+                model_data["zero_shot"]["true"].append(true_label)
             else:
-                errors["zero_shot"] += 1
+                model_data["zero_shot"]["errors"] += 1
 
-        # Calculate prediction distributions
-        for model, preds in predictions.items():
-            if preds:
-                summary["model_predictions"][model] = dict(Counter(preds))
+        # Calculate metrics for each model
+        for model_name, data in model_data.items():
+            if data["preds"]:  # Only calculate metrics if we have predictions
+                try:
+                    # Calculate basic metrics
+                    accuracy = accuracy_score(data["true"], data["preds"])
+                    precision, recall, f1, _ = precision_recall_fscore_support(
+                        data["true"], data["preds"],
+                        average='weighted',
+                        zero_division=0
+                    )
 
-        # Calculate confidence statistics
-        for model, confs in confidences.items():
-            if confs:
-                summary["confidence_stats"][model] = {
-                    "mean": np.mean(confs),
-                    "median": np.median(confs),
-                    "std": np.std(confs),
-                    "min": min(confs),
-                    "max": max(confs)
-                }
+                    summary["model_metrics"][model_name] = {
+                        "accuracy": accuracy * 100,
+                        "precision": precision * 100,
+                        "recall": recall * 100,
+                        "f1_score": f1 * 100
+                    }
 
-        # Calculate agreement between models
-        for m1 in predictions.keys():
-            for m2 in predictions.keys():
-                if m1 < m2:  # avoid duplicate comparisons
-                    common_predictions = [
-                        (p1, p2) for p1, p2 in zip(predictions[m1], predictions[m2])
-                        if p1 and p2  # Only compare when both predictions exist
-                    ]
-                    if common_predictions:
-                        agreement = sum(p1 == p2 for p1, p2 in common_predictions) / len(common_predictions)
-                        summary["agreement_analysis"][f"{m1}_vs_{m2}"] = agreement * 100
+                    # Calculate confusion matrix
+                    conf_matrix = confusion_matrix(
+                        data["true"],
+                        data["preds"],
+                        labels=["cancer", "non-cancer"]
+                    )
+                    summary["confusion_matrices"][model_name] = conf_matrix.tolist()
 
-        # Calculate error rates
-        for model, error_count in errors.items():
-            summary["error_rates"][model] = (error_count / summary["total_documents"]) * 100
-
-        # Calculate metrics against ground truth if provided
-        if ground_truth:
-            for model, preds in predictions.items():
-                if preds:
-                    try:
-                        # Filter out empty predictions
-                        valid_preds = [(pred, truth) for pred, truth in zip(preds, [ground_truth] * len(preds))
-                                       if pred]
-                        if valid_preds:
-                            y_pred, y_true = zip(*valid_preds)
-
-                            # Calculate accuracy
-                            accuracy = sum(p == t for p, t in zip(y_pred, y_true)) / len(y_pred)
-
-                            # Calculate precision, recall, and F1 with appropriate average
-                            precision, recall, f1, _ = precision_recall_fscore_support(
-                                y_true, y_pred,
-                                average='weighted',  # Use weighted average for multiclass
-                                zero_division=0
-                            )
-
-                            summary["ground_truth_evaluation"][model] = {
-                                "accuracy": accuracy * 100,
-                                "precision": precision * 100,
-                                "recall": recall * 100,
-                                "f1_score": f1 * 100
-                            }
-                    except Exception as e:
-                        self.logger.error(f"Error calculating metrics for {model}: {e}")
-                        summary["ground_truth_evaluation"][model] = {
-                            "error": str(e)
+                    # Calculate confidence statistics
+                    if data["conf"]:
+                        summary["confidence_stats"][model_name] = {
+                            "mean": np.mean(data["conf"]),
+                            "median": np.median(data["conf"]),
+                            "std": np.std(data["conf"]),
+                            "min": min(data["conf"]),
+                            "max": max(data["conf"])
                         }
 
+                except Exception as e:
+                    self.logger.error(f"Error calculating metrics for {model_name}: {e}")
+
+            # Calculate error rate
+            summary["error_rates"][model_name] = (data["errors"] / summary["total_documents"]) * 100
+
         return summary
-
-def format_result(result: Dict) -> str:
-    """Format classification result for display."""
-    output = [f"\nResults for {result['file_name']}:"]
-
-    if "pubmedbert" in result:
-        pub = result["pubmedbert"]
-        if "error" not in pub:
-            output.append("\nPubMedBERT Classification:")
-            output.append(f"  Classification: {pub['classification']}")
-            output.append(f"  Confidence: {pub['confidence']}%")
-
-    if "traditional_ml" in result:
-        trad = result["traditional_ml"]
-        output.append("\nTraditional ML Classifications:")
-        output.append(f"  LogisticRegression: {trad['log_reg_prediction']} ({trad['log_reg_confidence']}%)")
-        output.append(f"  SVM: {trad['svm_prediction']} ({trad['svm_confidence']}%)")
-
-    if "zero_shot" in result:
-        zero = result["zero_shot"]
-        output.append("\nZero-shot Classification:")
-        output.append(f"  Classification: {zero['prediction']}")
-        output.append(f"  Confidence: {zero['confidence']}%")
-
-    return "\n".join(output)
 
 
 def format_summary(summary: Dict) -> str:
@@ -275,50 +221,47 @@ def format_summary(summary: Dict) -> str:
     # Basic stats
     output.append(f"Total documents processed: {summary['total_documents']}")
 
-    # Ground truth evaluation if available
-    if "ground_truth_evaluation" in summary:
-        output.append("\nGround Truth Evaluation:")
-        metrics_table = []
-        headers = ["Model", "Accuracy", "Precision", "Recall", "F1 Score"]
-        for model, metrics in summary["ground_truth_evaluation"].items():
-            row = [
-                model,
-                f"{metrics['accuracy']:.2f}%",
-                f"{metrics['precision']:.2f}%",
-                f"{metrics['recall']:.2f}%",
-                f"{metrics['f1_score']:.2f}%"
-            ]
-            metrics_table.append(row)
-        output.append(tabulate(metrics_table, headers=headers, tablefmt="simple"))
-
-    # Prediction distributions
-    output.append("\nPrediction Distributions:")
-    for model, dist in summary["model_predictions"].items():
-        output.append(f"\n{model.upper()}:")
-        table = [[label, count] for label, count in dist.items()]
-        output.append(tabulate(table, headers=["Label", "Count"], tablefmt="simple"))
-
-    # Confidence statistics
-    output.append("\nConfidence Statistics:")
-    conf_table = []
-    headers = ["Model", "Mean", "Median", "Std Dev", "Min", "Max"]
-    for model, stats in summary["confidence_stats"].items():
+    # Model metrics
+    output.append("\nModel Performance Metrics:")
+    metrics_table = []
+    headers = ["Model", "Accuracy", "Precision", "Recall", "F1 Score"]
+    for model, metrics in summary["model_metrics"].items():
         row = [
             model,
-            f"{stats['mean']:.2f}%",
-            f"{stats['median']:.2f}%",
-            f"{stats['std']:.2f}%",
-            f"{stats['min']:.2f}%",
-            f"{stats['max']:.2f}%"
+            f"{metrics['accuracy']:.2f}%",
+            f"{metrics['precision']:.2f}%",
+            f"{metrics['recall']:.2f}%",
+            f"{metrics['f1_score']:.2f}%"
         ]
-        conf_table.append(row)
-    output.append(tabulate(conf_table, headers=headers, tablefmt="simple"))
+        metrics_table.append(row)
+    output.append(tabulate(metrics_table, headers=headers, tablefmt="simple"))
 
-    # Model agreement
-    output.append("\nModel Agreement:")
-    agreement_table = [[pair, f"{agreement:.2f}%"]
-                       for pair, agreement in summary["agreement_analysis"].items()]
-    output.append(tabulate(agreement_table, headers=["Models", "Agreement"], tablefmt="simple"))
+    # Confusion matrices
+    output.append("\nConfusion Matrices:")
+    for model, matrix in summary["confusion_matrices"].items():
+        output.append(f"\n{model.upper()}:")
+        conf_table = tabulate(matrix,
+                              headers=["Predicted Cancer", "Predicted Non-cancer"],
+                              showindex=["Actual Cancer", "Actual Non-cancer"],
+                              tablefmt="simple")
+        output.append(conf_table)
+
+    # Confidence statistics
+    if summary["confidence_stats"]:
+        output.append("\nConfidence Statistics:")
+        conf_table = []
+        headers = ["Model", "Mean", "Median", "Std Dev", "Min", "Max"]
+        for model, stats in summary["confidence_stats"].items():
+            row = [
+                model,
+                f"{stats['mean']:.2f}%",
+                f"{stats['median']:.2f}%",
+                f"{stats['std']:.2f}%",
+                f"{stats['min']:.2f}%",
+                f"{stats['max']:.2f}%"
+            ]
+            conf_table.append(row)
+        output.append(tabulate(conf_table, headers=headers, tablefmt="simple"))
 
     # Error rates
     output.append("\nError Rates:")
@@ -330,11 +273,10 @@ def format_summary(summary: Dict) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Classify clinical trial protocols')
-    parser.add_argument('--input', required=True, help='Path to PDF file or directory')
+    parser = argparse.ArgumentParser(description='Classify and evaluate clinical trial protocols')
+    parser.add_argument('--cancer-dir', required=True, help='Directory containing cancer protocol PDFs')
+    parser.add_argument('--non-cancer-dir', required=True, help='Directory containing non-cancer protocol PDFs')
     parser.add_argument('--output', help='Path to save results JSON file')
-    parser.add_argument('--ground-truth', choices=['cancer', 'non-cancer'],
-                        help='Expected classification for all documents in the input')
     parser.add_argument('--max-length', type=int, default=8000,
                         help='Maximum text length to process')
     parser.add_argument('--pubmedbert-path', default='./protocol_classifier',
@@ -356,21 +298,12 @@ def main():
         max_length=args.max_length
     )
 
-    # Process input
-    input_path = Path(args.input)
-    if input_path.is_file():
-        results = [classifier.classify_pdf(input_path)]
-    else:
-        results = classifier.batch_classify_pdfs(input_path)
+    # Process directories and generate results
+    results = classifier.process_protocol_directories(args.cancer_dir, args.non_cancer_dir)
 
     # Generate and display performance summary
-    summary = classifier.generate_performance_summary(results, args.ground_truth)
+    summary = classifier.generate_performance_summary(results)
     print(format_summary(summary))
-
-    # Display individual results
-    print("\n=== Individual Results ===")
-    for result in results:
-        print(format_result(result))
 
     # Save results if output path provided
     if args.output:
