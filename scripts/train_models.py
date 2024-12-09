@@ -126,11 +126,20 @@ def train_baseline_models(
         
         # Evaluate on test set
         logger.info("\nEvaluating baseline models on test set...")
+        
+        # Process test data in batches
+        batch_size = 32
         predictions = []
-        for _, row in tqdm(test_data.iterrows(), total=len(test_data), desc="Evaluating on test set"):
-            result = baseline.classify_text(row['text'])
-            pred = 1 if result.get('log_reg_prediction', 'non_cancer') == 'cancer' else 0
-            predictions.append(pred)
+        test_texts = test_data["text"].tolist()
+        
+        for i in tqdm(range(0, len(test_texts), batch_size), desc="Evaluating on test set"):
+            batch_texts = test_texts[i:i + batch_size]
+            batch_results = baseline.classify_text_batch(batch_texts)
+            
+            # Extract predictions using logistic regression as primary classifier
+            for result in batch_results:
+                pred = 1 if result['traditional_ml']['log_reg_prediction'] == 'cancer' else 0
+                predictions.append(pred)
         
         accuracy = accuracy_score(test_data['label'].tolist(), predictions) * 100
         precision, recall, f1, _ = precision_recall_fscore_support(test_data['label'].tolist(), predictions, average='binary')
@@ -165,17 +174,26 @@ def evaluate_model(model, test_data: pd.DataFrame) -> Dict[str, float]:
     
     predictions = []
     labels = test_data['label'].tolist()
+    texts = test_data['text'].tolist()
     
-    # Get predictions
-    for _, row in tqdm(test_data.iterrows(), total=len(test_data), desc="Evaluating on test set"):
+    # Process in batches
+    batch_size = 32
+    
+    for i in tqdm(range(0, len(texts), batch_size), desc="Evaluating on test set"):
+        batch_texts = texts[i:i + batch_size]
+        
         if isinstance(model, BERTClassifier):
-            result = model.classify_text(row['text'])
-            pred = 1 if result['classification'] == 'cancer' else 0
+            # BERT models handle batching internally
+            results = [model.classify_text(text) for text in batch_texts]
+            batch_predictions = [1 if result['classification'] == 'cancer' else 0 
+                               for result in results]
         else:
-            result = model.classify_text(row['text'])
-            # For baseline models, use logistic regression prediction
-            pred = 1 if result.get('log_reg_prediction', 'non_cancer') == 'cancer' else 0
-        predictions.append(pred)
+            # For baseline models, use the batch classification
+            results = model.classify_text_batch(batch_texts)
+            batch_predictions = [1 if result['traditional_ml']['log_reg_prediction'] == 'cancer' 
+                               else 0 for result in results]
+        
+        predictions.extend(batch_predictions)
     
     # Calculate metrics
     accuracy = accuracy_score(labels, predictions) * 100

@@ -1,14 +1,15 @@
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import LinearSVC
-from transformers import pipeline
-import numpy as np
+from typing import Dict, Union, List
 import platform
 import torch
 import joblib
 import logging
 from pathlib import Path
-from typing import Dict, Union, List
+import numpy as np
+from datasets import Dataset, DatasetDict
+from transformers import pipeline, AutoTokenizer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import LinearSVC
 from utils.text_extractor import ProtocolTextExtractor
 
 
@@ -32,12 +33,16 @@ class BaselineClassifiers:
         # Initialize text extractor
         self.extractor = ProtocolTextExtractor(max_length=max_length)
         
-        # Initialize zero-shot classifier
+        # Initialize zero-shot classifier and tokenizer
         self.logger.info("Loading zero-shot classifier...")
+        model_name = "FacebookAI/roberta-large-mnli"
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.zero_shot = pipeline(
             "zero-shot-classification",
-            model="FacebookAI/roberta-large-mnli",
-            device=self.device
+            model=model_name,
+            tokenizer=self.tokenizer,
+            device=self.device,
+            batch_size=32
         )
         
         # Initialize traditional ML models
@@ -143,6 +148,100 @@ class BaselineClassifiers:
             "traditional_ml": traditional_results,
             "zero_shot": zero_shot_results
         }
+
+    def classify_text(self, text: str) -> Dict[str, Dict[str, Union[str, float]]]:
+        """Classify text directly using all methods."""
+        if not text:
+            return {
+                "error": "Empty text"
+            }
+        
+        # Get predictions from all models
+        traditional_results = self._classify_traditional(text)
+        zero_shot_results = self._classify_zero_shot(text)
+        
+        return {
+            "traditional_ml": traditional_results,
+            "zero_shot": zero_shot_results
+        }
+
+    def classify_text_batch(self, texts: List[str]) -> List[Dict[str, Dict[str, Union[str, float]]]]:
+        """Classify a batch of texts using all methods."""
+        if not texts:
+            return []
+        
+        results = []
+        
+        # Get traditional ML predictions
+        X = self.tfidf.transform(texts)
+        log_reg_probs = self.log_reg.predict_proba(X)
+        svm_decisions = self.svm.decision_function(X)
+        
+        # Create dataset for zero-shot classification
+        from datasets import Dataset, disable_progress_bar
+        
+        # Disable progress bar for dataset operations
+        disable_progress_bar()
+        
+        # Create dataset with the texts
+        dataset = Dataset.from_dict({"text": texts})
+        
+        # Define the classification function
+        def classify_batch(examples):
+            outputs = self.zero_shot(
+                examples["text"],
+                candidate_labels=["cancer research protocol", "non_cancer clinical trial protocol"],
+                hypothesis_template="This document is a {}.",
+                batch_size=32
+            )
+            return {"zero_shot_output": outputs}
+        
+        # Apply the classification function to the dataset
+        dataset = dataset.map(
+            classify_batch,
+            batched=True,
+            batch_size=32,
+            remove_columns=dataset.column_names,
+            desc=None  # Disable the description to hide progress bar
+        )
+        
+        # Process results for each text
+        zero_shot_results = dataset["zero_shot_output"]
+        
+        for i, text in enumerate(texts):
+            # Process logistic regression results
+            log_reg_prob = log_reg_probs[i]
+            log_reg_pred = "cancer" if log_reg_prob[1] > 0.5 else "non_cancer"
+            log_reg_conf = max(log_reg_prob) * 100
+            
+            # Process SVM results
+            svm_decision = svm_decisions[i]
+            svm_pred = "cancer" if svm_decision > 0 else "non_cancer"
+            svm_conf = (1 / (1 + np.exp(-svm_decision))) * 100
+            
+            # Process zero-shot results
+            try:
+                zero_shot_result = zero_shot_results[i]
+                prediction = "cancer" if zero_shot_result['labels'][0] == "cancer research protocol" else "non_cancer"
+                zero_shot_conf = max(zero_shot_result['scores']) * 100
+            except (IndexError, KeyError):
+                prediction = "unknown"
+                zero_shot_conf = 0.0
+            
+            results.append({
+                "traditional_ml": {
+                    "log_reg_prediction": log_reg_pred,
+                    "log_reg_confidence": round(log_reg_conf, 2),
+                    "svm_prediction": svm_pred,
+                    "svm_confidence": round(svm_conf, 2)
+                },
+                "zero_shot": {
+                    "prediction": prediction,
+                    "confidence": round(zero_shot_conf, 2)
+                }
+            })
+        
+        return results
 
     def _classify_traditional(self, text: str) -> Dict[str, Union[str, float]]:
         """Get predictions from traditional ML models."""
