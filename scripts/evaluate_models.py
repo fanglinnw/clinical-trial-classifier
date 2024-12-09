@@ -100,7 +100,9 @@ class ProtocolClassifierEnsemble:
             expected.append(1 if expected_class == 'cancer' else 0)
             
             for name, result in results.items():
-                pred = 1 if result['classification'] == 'cancer' else 0
+                # Default to 'non-cancer' if classification is missing or unknown
+                classification = result.get('classification', 'non-cancer')
+                pred = 1 if classification == 'cancer' else 0
                 predictions[name].append(pred)
         
         # Calculate metrics for each classifier
