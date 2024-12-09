@@ -8,6 +8,7 @@ import sys
 import os
 import numpy as np
 from tabulate import tabulate
+from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -78,7 +79,7 @@ class ProtocolClassifierEnsemble:
         
         Args:
             directory: Path to directory containing PDFs
-            expected_class: Expected class label ('cancer' or 'non-cancer')
+            expected_class: Expected class label ('cancer' or 'non_cancer')
             
         Returns:
             Dictionary with evaluation metrics for each classifier
@@ -94,16 +95,21 @@ class ProtocolClassifierEnsemble:
         predictions = {name: [] for name in self.classifiers.keys()}
         expected = []
         
-        # Process each PDF
-        for pdf_path in pdf_files:
-            results = self.classify_pdf(pdf_path)
-            expected.append(1 if expected_class == 'cancer' else 0)
-            
-            for name, result in results.items():
-                # Default to 'non-cancer' if classification is missing or unknown
-                classification = result.get('classification', 'non-cancer')
-                pred = 1 if classification == 'cancer' else 0
-                predictions[name].append(pred)
+        # Process BERT models in batches
+        for name, classifier in self.classifiers.items():
+            self.logger.info(f"\nEvaluating {name} classifier on {directory}")
+            if isinstance(classifier, BERTClassifier):
+                batch_results = classifier.classify_pdfs_batch(pdf_files)
+                for result in batch_results:
+                    predictions[name].append(1 if result['classification'] == 'cancer' else 0)
+            else:
+                # Process other classifiers normally with progress bar
+                for pdf_path in tqdm(pdf_files, desc=f"Processing files", unit="file"):
+                    result = classifier.classify_pdf(pdf_path)
+                    predictions[name].append(1 if result['classification'] == 'cancer' else 0)
+        
+        # Set expected values
+        expected = [1 if expected_class == 'cancer' else 0] * len(pdf_files)
         
         # Calculate metrics for each classifier
         metrics = {}
@@ -159,6 +165,8 @@ def main():
                         help='Directory containing trained models')
     parser.add_argument('--max-length', type=int, default=8000,
                         help='Maximum text length to process')
+    parser.add_argument('--model', choices=['biobert', 'clinicalbert', 'pubmedbert', 'baseline'],
+                        help='Specify a single model to evaluate. If not provided, all models will be evaluated.')
     args = parser.parse_args()
 
     # Set up logging
@@ -174,9 +182,23 @@ def main():
         max_length=args.max_length
     )
 
+    # If a specific model is selected, keep only that model
+    if args.model:
+        if args.model in ensemble.classifiers:
+            selected_classifier = ensemble.classifiers[args.model]
+            ensemble.classifiers.clear()
+            ensemble.classifiers[args.model] = selected_classifier
+            logger.info(f"Evaluating only the {args.model} model")
+        else:
+            logger.error(f"Model {args.model} not found or failed to load")
+            return
+
     # Evaluate on cancer and non-cancer directories
+    logger.info("\nEvaluating cancer protocols...")
     cancer_metrics = ensemble.evaluate_directory(args.cancer_dir, 'cancer')
-    non_cancer_metrics = ensemble.evaluate_directory(args.non_cancer_dir, 'non-cancer')
+    
+    logger.info("\nEvaluating non-cancer protocols...")
+    non_cancer_metrics = ensemble.evaluate_directory(args.non_cancer_dir, 'non_cancer')
 
     # Calculate and display average metrics
     summary = {}
@@ -194,7 +216,7 @@ def main():
     # Save results
     results = {
         'cancer': cancer_metrics,
-        'non_cancer': non_cancer_metrics,
+        'non_cancer': non_cancer_metrics,  # Keep underscore here for backward compatibility with existing results files
         'average': summary
     }
     

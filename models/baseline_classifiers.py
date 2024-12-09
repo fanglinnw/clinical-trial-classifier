@@ -149,31 +149,34 @@ class BaselineClassifiers:
         X = self.tfidf.transform([text])
         
         log_reg_prob = self.log_reg.predict_proba(X)[0]
-        log_reg_pred = "cancer" if log_reg_prob[1] > 0.5 else "non-cancer"
+        log_reg_pred = "cancer" if log_reg_prob[1] > 0.5 else "non_cancer"
+        log_reg_conf = max(log_reg_prob) * 100
         
-        svm_decision = self.svm.decision_function(X)[0]
-        svm_prob = 1 / (1 + np.exp(-svm_decision))
-        svm_pred = "cancer" if svm_prob > 0.5 else "non-cancer"
+        svm_prob = self.svm.predict_proba(X)[0][1]
+        svm_pred = "cancer" if svm_prob > 0.5 else "non_cancer"
+        svm_conf = max(svm_prob, 1 - svm_prob) * 100
         
         return {
             "log_reg_prediction": log_reg_pred,
-            "log_reg_confidence": round(max(log_reg_prob) * 100, 2),
+            "log_reg_confidence": round(log_reg_conf, 2),
             "svm_prediction": svm_pred,
-            "svm_confidence": round(max(svm_prob, 1-svm_prob) * 100, 2)
+            "svm_confidence": round(svm_conf, 2)
         }
 
     def _classify_zero_shot(self, text: str) -> Dict[str, Union[str, float]]:
         """Get prediction from zero-shot classifier."""
-        # candidate_labels = ["cancer clinical trial", "non-cancer clinical trial"]
-        # candidate_labels = ["cancer research protocol", "non-cancer clinical trial protocol"]
-        result = self.zero_shot(text, candidate_labels=["cancer research protocol",
-                                          "non-cancer clinical trial protocol"],
-                        hypothesis_template="This document describes a {}.")
-        
-        prediction = "cancer" if result['labels'][0] == "cancer research protocol" else "non-cancer"
-        confidence = round(result['scores'][0] * 100, 2)
+        try:
+            result = self.zero_shot(text, candidate_labels=["cancer research protocol",
+                                          "non_cancer clinical trial protocol"],
+                        hypothesis_template="This document is a {}.")
+            prediction = "cancer" if result['labels'][0] == "cancer research protocol" else "non_cancer"
+            zero_shot_conf = max(result['scores']) * 100
+        except Exception as e:
+            self.logger.error(f"Zero-shot classification failed: {e}")
+            prediction = "unknown"
+            zero_shot_conf = 0.0
         
         return {
             "prediction": prediction,
-            "confidence": confidence
+            "confidence": round(zero_shot_conf, 2)
         }

@@ -4,6 +4,7 @@ from pathlib import Path
 import logging
 import platform
 from typing import Dict, Union
+from tqdm import tqdm
 from utils.text_extractor import ProtocolTextExtractor
 
 class BERTClassifier:
@@ -73,6 +74,19 @@ class BERTClassifier:
             }
 
         try:
+            return self.classify_text(text)
+        except Exception as e:
+            self.logger.error(f"Error during classification: {e}")
+            return {
+                "file_name": str(pdf_path),
+                "classification": "unknown",
+                "confidence": 0.0,
+                "error": str(e)
+            }
+
+    def classify_text(self, text: str) -> Dict[str, Union[str, float]]:
+        """Classify text directly without PDF extraction."""
+        try:
             # Tokenize the text
             inputs = self.tokenizer(
                 text,
@@ -89,19 +103,85 @@ class BERTClassifier:
                 prediction = torch.argmax(probabilities, dim=1)
                 confidence = probabilities[0][prediction].item()
 
-            label = "cancer" if prediction.item() == 1 else "non-cancer"
+            label = "cancer" if prediction.item() == 1 else "non_cancer"
             
             return {
-                "file_name": str(pdf_path),
                 "classification": label,
                 "confidence": round(confidence * 100, 2)
             }
 
         except Exception as e:
-            self.logger.error(f"Error during classification: {e}")
+            self.logger.error(f"Error during text classification: {e}")
             return {
-                "file_name": str(pdf_path),
                 "classification": "unknown",
                 "confidence": 0.0,
                 "error": str(e)
             }
+
+    def classify_pdfs_batch(self, pdf_paths, batch_size=8):
+        """Classify multiple PDFs in batches for better GPU utilization."""
+        results = []
+        texts = []
+        valid_paths = []
+
+        # First extract all texts
+        for pdf_path in tqdm(pdf_paths, desc="Extracting text from PDFs", unit="file"):
+            result = self.extractor.extract_from_pdf(pdf_path)
+            text = result["full_text"]
+            if text:
+                texts.append(text)
+                valid_paths.append(pdf_path)
+            else:
+                results.append({
+                    "file_name": str(pdf_path),
+                    "classification": "unknown",
+                    "confidence": 0.0,
+                    "error": "Text extraction failed"
+                })
+
+        if not texts:
+            return results
+
+        # Process in batches with progress bar
+        num_batches = (len(texts) + batch_size - 1) // batch_size
+        for i in tqdm(range(0, len(texts), batch_size), desc="Processing batches", total=num_batches, unit="batch"):
+            batch_texts = texts[i:i + batch_size]
+            batch_paths = valid_paths[i:i + batch_size]
+            
+            try:
+                # Tokenize the batch
+                inputs = self.tokenizer(
+                    batch_texts,
+                    truncation=True,
+                    padding=True,
+                    max_length=512,
+                    return_tensors="pt"
+                ).to(self.device)
+
+                # Get predictions
+                with torch.no_grad():
+                    outputs = self.model(**inputs)
+                    probabilities = torch.nn.functional.softmax(outputs.logits, dim=1)
+                    predictions = torch.argmax(probabilities, dim=1)
+                    confidences = probabilities[range(len(predictions)), predictions]
+
+                # Process results
+                for path, pred, conf in zip(batch_paths, predictions, confidences):
+                    label = "cancer" if pred.item() == 1 else "non_cancer"
+                    results.append({
+                        "file_name": str(path),
+                        "classification": label,
+                        "confidence": round(conf.item() * 100, 2)
+                    })
+
+            except Exception as e:
+                self.logger.error(f"Error during batch classification: {e}")
+                for path in batch_paths:
+                    results.append({
+                        "file_name": str(path),
+                        "classification": "unknown",
+                        "confidence": 0.0,
+                        "error": str(e)
+                    })
+
+        return results
