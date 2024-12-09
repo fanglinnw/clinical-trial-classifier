@@ -19,7 +19,6 @@ from models.baseline_classifiers import BaselineClassifiers
 class ProtocolClassifierEnsemble:
     def __init__(self,
                  trained_models_dir: str = "./trained_models",
-                 baseline_path: str = "./baseline_models",
                  max_length: int = 8000):
         """
         Initialize ensemble of classifiers.
@@ -43,6 +42,7 @@ class ProtocolClassifierEnsemble:
         
         # Initialize baseline models
         try:
+            baseline_path = os.path.join(trained_models_dir, "baseline")
             self.classifiers['baseline'] = BaselineClassifiers(model_dir=baseline_path)
             self.logger.info("Loaded baseline classifiers")
         except Exception as e:
@@ -155,8 +155,6 @@ def main():
                         help='Directory containing non-cancer protocol PDFs')
     parser.add_argument('--models-dir', default='./trained_models',
                         help='Directory containing trained models')
-    parser.add_argument('--baseline-path', default='./baseline_models',
-                        help='Path to baseline models')
     parser.add_argument('--max-length', type=int, default=8000,
                         help='Maximum text length to process')
     args = parser.parse_args()
@@ -171,7 +169,6 @@ def main():
     # Initialize ensemble
     ensemble = ProtocolClassifierEnsemble(
         trained_models_dir=args.models_dir,
-        baseline_path=args.baseline_path,
         max_length=args.max_length
     )
 
