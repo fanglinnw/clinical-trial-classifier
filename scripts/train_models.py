@@ -187,13 +187,27 @@ def train_bert_model(
     logger.info(f"Starting {model_type.upper()} training...")
     train_result = trainer.train()
     
-    # Save the model
+    # Evaluate the model
+    eval_result = trainer.evaluate()
+    
+    # Save the model and evaluation results
     trainer.save_model()
     tokenizer.save_pretrained(output_dir)
+    
+    # Save evaluation results
+    eval_output_path = os.path.join(output_dir, "eval_results.txt")
+    with open(eval_output_path, "w") as f:
+        f.write("Evaluation Results:\n")
+        for key, value in eval_result.items():
+            f.write(f"{key}: {value}\n")
+        f.write("\nTraining Results:\n")
+        f.write(f"Final Loss: {train_result.training_loss}\n")
+        f.write(f"Steps: {train_result.global_step}\n")
     
     return {
         "train_loss": train_result.training_loss,
         "train_steps": train_result.global_step,
+        "eval_results": eval_result,
         "model_path": output_dir
     }
 
