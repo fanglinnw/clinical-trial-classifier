@@ -212,12 +212,12 @@ class BaselineClassifiers:
             # Process logistic regression results
             log_reg_prob = log_reg_probs[i]
             log_reg_pred = "cancer" if log_reg_prob[1] > 0.5 else "non_cancer"
-            log_reg_conf = max(log_reg_prob) * 100
+            log_reg_conf = log_reg_prob[1] * 100
             
             # Process SVM results
             svm_decision = svm_decisions[i]
             svm_pred = "cancer" if svm_decision > 0 else "non_cancer"
-            svm_conf = (1 / (1 + np.exp(-svm_decision))) * 100
+            svm_conf = (1 / (1 + np.exp(-abs(svm_decision)))) * 100
             
             # Process zero-shot results
             try:
@@ -250,13 +250,12 @@ class BaselineClassifiers:
         # Logistic Regression prediction
         log_reg_prob = self.log_reg.predict_proba(X)[0]
         log_reg_pred = "cancer" if log_reg_prob[1] > 0.5 else "non_cancer"
-        log_reg_conf = max(log_reg_prob) * 100
+        log_reg_conf = log_reg_prob[1] * 100
         
         # SVM prediction using decision_function
         svm_decision = self.svm.decision_function(X)[0]
         svm_pred = "cancer" if svm_decision > 0 else "non_cancer"
-        # Convert decision function to probability-like score
-        svm_conf = (1 / (1 + np.exp(-svm_decision))) * 100
+        svm_conf = (1 / (1 + np.exp(-abs(svm_decision)))) * 100
         
         return {
             "log_reg_prediction": log_reg_pred,
