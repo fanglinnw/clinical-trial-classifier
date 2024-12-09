@@ -263,6 +263,7 @@ def main():
     model_types = ['biobert', 'clinicalbert', 'pubmedbert']
     
     for model_type in model_types:
+        logger.info(f"\nTraining {model_type.upper()}...")
         model_output_dir = os.path.join(args.output_dir, model_type)
         os.makedirs(model_output_dir, exist_ok=True)
         
@@ -280,14 +281,16 @@ def main():
                 weight_decay=args.weight_decay,
                 early_stopping_patience=args.early_stopping_patience
             )
-            logger.info(f"Successfully trained {model_type}")
         except Exception as e:
             logger.error(f"Error training {model_type}: {e}")
             results[model_type] = {"error": str(e)}
     
     # Save training results
-    with open(os.path.join(args.output_dir, "training_results.json"), "w") as f:
-        json.dump(results, f, indent=2)
+    results_file = os.path.join(args.output_dir, "training_results.json")
+    with open(results_file, "w") as f:
+        json.dump(results, f, indent=4)
+    
+    logger.info("\nTraining complete. Results saved to training_results.json")
 
 if __name__ == "__main__":
     main()

@@ -177,7 +177,7 @@ def main():
 
     # Evaluate on cancer and non-cancer directories
     cancer_metrics = ensemble.evaluate_directory(args.cancer_dir, 'cancer')
-    non_cancer_metrics = ensemble.evaluate_directory(args.non_cancer_dir, 'non_cancer')
+    non_cancer_metrics = ensemble.evaluate_directory(args.non_cancer_dir, 'non-cancer')
 
     # Calculate and display average metrics
     summary = {}
@@ -199,9 +199,11 @@ def main():
         'average': summary
     }
     
-    output_dir = Path(args.models_dir)
-    with open(output_dir / 'evaluation_results.json', 'w') as f:
-        json.dump(results, f, indent=2)
+    results_file = os.path.join(args.models_dir, "evaluation_results.json")
+    with open(results_file, "w") as f:
+        json.dump(results, f, indent=4)
+    
+    logger.info(f"\nResults saved to {results_file}")
 
 if __name__ == "__main__":
     main()

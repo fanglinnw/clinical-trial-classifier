@@ -13,10 +13,10 @@ from utils.text_extractor import ProtocolTextExtractor
 
 
 class BaselineClassifiers:
-    def __init__(self, model_dir: str = "./baseline_models", max_length: int = 8000):
+    def __init__(self, model_dir: str = "./trained_models/baseline", max_length: int = 8000):
         """Initialize baseline classifiers."""
         self.model_dir = Path(model_dir)
-        self.model_dir.mkdir(exist_ok=True)
+        self.model_dir.mkdir(exist_ok=True, parents=True)
         
         # Set up logging
         self.logger = logging.getLogger(__name__)
@@ -40,10 +40,17 @@ class BaselineClassifiers:
             device=self.device
         )
         
-        # Traditional ML models will be initialized during training
+        # Initialize traditional ML models
         self.tfidf = None
         self.log_reg = None
         self.svm = None
+        
+        # Try to load trained models if they exist
+        try:
+            self.load_traditional_models()
+            self.logger.info("Successfully loaded traditional ML models")
+        except Exception as e:
+            self.logger.warning(f"Could not load traditional ML models: {e}")
 
     def train_traditional_models(self, train_dir: str):
         """Train TF-IDF + LogisticRegression and SVM models."""
@@ -104,9 +111,16 @@ class BaselineClassifiers:
 
     def load_traditional_models(self):
         """Load trained traditional ML models."""
-        self.tfidf = joblib.load(self.model_dir / 'tfidf.joblib')
-        self.log_reg = joblib.load(self.model_dir / 'logistic_regression.joblib')
-        self.svm = joblib.load(self.model_dir / 'svm.joblib')
+        tfidf_path = self.model_dir / 'tfidf.joblib'
+        log_reg_path = self.model_dir / 'logistic_regression.joblib'
+        svm_path = self.model_dir / 'svm.joblib'
+        
+        if not all(path.exists() for path in [tfidf_path, log_reg_path, svm_path]):
+            raise FileNotFoundError("One or more model files not found. Please train the models first.")
+            
+        self.tfidf = joblib.load(tfidf_path)
+        self.log_reg = joblib.load(log_reg_path)
+        self.svm = joblib.load(svm_path)
 
     def classify_pdf(self, pdf_path: Union[str, Path]) -> Dict[str, Dict[str, Union[str, float]]]:
         """Classify a PDF using all methods."""
