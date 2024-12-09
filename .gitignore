@@ -35,9 +35,7 @@ ENV/
 
 # Project specific
 protocol_documents/
-protocol_classifier/
-baseline_models/
-results/
+protocol_documents_debug/
 logs/
 *.pdf
 *.joblib
