@@ -43,9 +43,13 @@ logs/
 *.joblib
 
 # Model files
-*.bin
-*.pt
 *.pth
+
+# Trained Models
+trained_models/
+*.pt
+*.bin
+*.h5
 
 # Logs
 *.log

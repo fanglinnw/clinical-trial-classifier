@@ -83,6 +83,25 @@ class BaselineClassifiers:
         joblib.dump(self.log_reg, self.model_dir / 'logistic_regression.joblib')
         joblib.dump(self.svm, self.model_dir / 'svm.joblib')
 
+    def train_with_data(self, texts: List[str], labels: List[int]):
+        """Train models with pre-loaded data."""
+        self.logger.info("Training traditional ML models...")
+        
+        # Train models
+        self.tfidf = TfidfVectorizer(max_features=10000, ngram_range=(1, 2))
+        X = self.tfidf.fit_transform(texts)
+        
+        self.log_reg = LogisticRegression(max_iter=1000)
+        self.log_reg.fit(X, labels)
+        
+        self.svm = LinearSVC(max_iter=1000)
+        self.svm.fit(X, labels)
+        
+        # Save models
+        joblib.dump(self.tfidf, self.model_dir / 'tfidf.joblib')
+        joblib.dump(self.log_reg, self.model_dir / 'logistic_regression.joblib')
+        joblib.dump(self.svm, self.model_dir / 'svm.joblib')
+
     def load_traditional_models(self):
         """Load trained traditional ML models."""
         self.tfidf = joblib.load(self.model_dir / 'tfidf.joblib')

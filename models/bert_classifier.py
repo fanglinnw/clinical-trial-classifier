@@ -1,30 +1,30 @@
 import torch
-from torch.utils.data import Dataset
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from pathlib import Path
 import logging
 import platform
 from typing import Dict, Union
 from utils.text_extractor import ProtocolTextExtractor
 
+class BERTClassifier:
+    MODEL_PATHS = {
+        'biobert': "dmis-lab/biobert-v1.1",
+        'clinicalbert': "emilyalsentzer/Bio_ClinicalBERT",
+        'pubmedbert': "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext"
+    }
 
-class ProtocolDataset(Dataset):
-    def __init__(self, texts, labels, tokenizer, max_length=512):
-        self.encodings = tokenizer(texts, truncation=True, padding=True, max_length=max_length)
-        self.labels = labels
+    def __init__(self, model_type: str, model_path: str = None, max_length: int = 8000):
+        """
+        Initialize the classifier.
+        
+        Args:
+            model_type: Type of BERT model ('biobert', 'clinicalbert', or 'pubmedbert')
+            model_path: Path to fine-tuned model. If None, uses the base model.
+            max_length: Maximum length for text extraction
+        """
+        if model_type not in self.MODEL_PATHS:
+            raise ValueError(f"model_type must be one of {list(self.MODEL_PATHS.keys())}")
 
-    def __getitem__(self, idx):
-        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
-        item['labels'] = torch.tensor(self.labels[idx])
-        return item
-
-    def __len__(self):
-        return len(self.labels)
-
-
-class PubMedBERTClassifier:
-    def __init__(self, model_path: str = "./protocol_classifier", max_length: int = 8000):
-        """Initialize the classifier."""
         # Device setup for M1 Mac
         if platform.processor() == 'arm':
             device_name = 'mps' if torch.backends.mps.is_available() else 'cpu'
@@ -39,8 +39,19 @@ class PubMedBERTClassifier:
         self.extractor = ProtocolTextExtractor(max_length=max_length)
         
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-            self.model = AutoModelForSequenceClassification.from_pretrained(model_path)
+            if model_path and Path(model_path).exists():
+                # Load fine-tuned model
+                self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+                self.model = AutoModelForSequenceClassification.from_pretrained(model_path)
+            else:
+                # Load base model
+                base_model = self.MODEL_PATHS[model_type]
+                self.tokenizer = AutoTokenizer.from_pretrained(base_model)
+                self.model = AutoModelForSequenceClassification.from_pretrained(
+                    base_model,
+                    num_labels=2
+                )
+            
             self.model.to(self.device)
             self.model.eval()
         except Exception as e:
