@@ -1,16 +1,21 @@
 # Clinical Trial Protocol Classifier
 
-This repository contains scripts for downloading and classifying clinical trial protocols from ClinicalTrials.gov. It implements three different classification approaches:
-1. Fine-tuned PubMedBERT (optimized for medical text)
-2. Traditional ML baselines (TF-IDF with Logistic Regression and SVM)
-3. Zero-shot classification using RoBERTa-MNLI
+This repository contains a machine learning system for classifying clinical trial protocols from ClinicalTrials.gov as either cancer-related or non-cancer studies. The system implements multiple approaches for comparison:
+
+1. **BERT-based Models**
+   - BioBERT: Specialized for biomedical text
+   - Bio_ClinicalBERT: Optimized for clinical notes
+   - PubMedBERT: Pre-trained on PubMed abstracts and full-text
+2. **Traditional ML Baselines**
+   - TF-IDF with Logistic Regression
+   - TF-IDF with SVM
 
 ## Setup
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/YOUR_USERNAME/study_classifier.git
-cd study_classifier
+git clone https://github.com/YOUR_USERNAME/clinical-trial-classifier.git
+cd clinical-trial-classifier
 ```
 
 2. Create a virtual environment (recommended):
@@ -24,76 +29,91 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Key dependencies:
-- PyTorch >= 2.0.0
-- Transformers >= 4.30.0
-- PyMuPDF >= 1.22.0
-- scikit-learn >= 1.0.0
-- pandas >= 1.5.0
-- accelerate >= 0.26.0
+### Key Dependencies
+- transformers >= 4.30.0 (for BERT models)
+- torch >= 2.0.0 (optimized for Apple Silicon)
+- scikit-learn >= 1.0.0 (for baseline models)
+- PyMuPDF >= 1.22.0 (for PDF processing)
+- pandas >= 1.5.0 (for data handling)
+- tqdm (for progress bars)
+- requests (for API calls)
 
-Note: The scripts are optimized for Apple M1 chips and will automatically use the appropriate device (MPS, CUDA, or CPU).
+### Hardware Support
+- Automatically uses MPS acceleration on Apple Silicon Macs
+- Falls back to CPU if no GPU/MPS is available
+- CUDA support for systems with NVIDIA GPUs
 
 ## Project Components
 
-### 1. Data Collection
+### 1. Data Collection (`download_protocols.py`)
 
 Download and split clinical trial protocols:
 
 ```bash
-python scripts/download_protocols.py --target-size 1500
+python scripts/download_protocols.py [options]
 ```
 
-This will:
-- Download approximately 3000 protocols (1500 cancer and 1500 non-cancer)
-- Split them into train (70%), validation (15%), and test (15%) sets
-- Organize them in the appropriate directories
+Options:
+- `--target-size`: Target number of protocols per type (cancer/non-cancer) (default: 1500)
+- `--train-ratio`: Ratio of studies to use for training (default: 0.7)
+- `--val-ratio`: Ratio of studies to use for validation (default: 0.15)
+- `--test-ratio`: Ratio of studies to use for testing (default: 0.15)
+- `--force-download`: Force re-download of existing files
+- `--output-dir`: Output directory for protocol documents (default: protocol_documents)
+- `--eval-mode`: Download evaluation dataset with no overlap with other datasets
+- `--exclude-dirs`: Additional directories to check for existing NCT IDs to exclude
 
-### 2. Model Training
+### 2. Model Training (`train_models.py`)
 
-Train the PubMedBERT classifier:
+Train all models (BERT variants and baselines):
 
 ```bash
-python scripts/train_models.py
+python scripts/train_models.py [options]
 ```
 
-Train the traditional ML baseline models:
+Options:
+- `--data-dir`: Directory containing protocol documents (default: ./protocol_documents)
+- `--output-dir`: Directory to save models (default: ./trained_models)
+- `--max-length`: Maximum sequence length for BERT models (default: 512)
+- `--batch-size`: Training batch size (default: 4)
+- `--epochs`: Number of training epochs (default: 5)
+- `--learning-rate`: Learning rate (default: 2e-5)
+- `--warmup-ratio`: Warmup ratio (default: 0.1)
+- `--weight-decay`: Weight decay (default: 0.01)
+- `--early-stopping-patience`: Early stopping patience (default: 3)
+- `--seed`: Random seed (default: 42)
+- `--max-text-length`: Maximum text length for extraction (default: 8000)
+
+### 3. Model Evaluation (`evaluate_models.py`)
+
+Evaluate model performance:
 
 ```bash
-python scripts/classify_protocol.py --train --train-dir ./protocol_documents
+python scripts/evaluate_models.py [options]
 ```
 
-Note: The zero-shot classifier doesn't require training.
+Options:
+- `--cancer-dir`: Directory containing cancer protocol PDFs (required)
+- `--non-cancer-dir`: Directory containing non-cancer protocol PDFs (required)
+- `--models-dir`: Directory containing trained models (default: ./trained_models)
+- `--baseline-path`: Path to baseline models (default: ./baseline_models)
+- `--max-length`: Maximum text length to process (default: 8000)
 
-### 3. Model Evaluation
+### 4. Prediction (`predict.py`)
 
-Evaluate model performance on test data:
+Predict cancer relevance for new protocols:
 
 ```bash
-python scripts/evaluate_models.py \
-    --cancer-dir path/to/cancer/protocols \
-    --non-cancer-dir path/to/non-cancer/protocols \
-    --output results.json
+python scripts/predict.py [options] input_path
 ```
 
-Additional evaluation options:
-```bash
-python scripts/evaluate_models.py \
-    --cancer-dir path/to/cancer/protocols \
-    --non-cancer-dir path/to/non-cancer/protocols \
-    --output results.json \
-    --max-length 8000 \
-    --pubmedbert-path ./protocol_classifier \
-    --baseline-path ./baseline_models
-```
+Options:
+- `input_path`: Path to a PDF file or directory containing PDFs (required)
+- `--model-path`: Path to the trained PubMedBERT model (default: ./protocol_classifier)
+- `--max-length`: Maximum sequence length for the model (default: 8000)
+- `--output`: Optional path to save results as JSON
 
-The evaluation script will:
-- Process all PDFs in the specified directories
-- Run classification using both PubMedBERT and baseline models
-- Generate performance metrics and confusion matrices
-- Save detailed results and summary to the specified output file
-
-### 4. Classification
+### 5. Classification
 
 The classifier can process directories of cancer and non-cancer protocols:
 
@@ -121,93 +141,83 @@ The script will:
 - Generate performance metrics and confusion matrices
 - Save detailed results and summary to the specified output file
 
-### 5. Making Predictions
-
-To predict cancer relevance for new protocols:
-
-```bash
-# Predict for a single PDF
-python scripts/predict.py path/to/protocol.pdf --output prediction.json
-
-# Predict for a directory of PDFs
-python scripts/predict.py path/to/protocols/dir --output predictions.json
-```
-
-Additional prediction options:
-```bash
-python scripts/predict.py \
-    path/to/input \
-    --model-path ./protocol_classifier \
-    --max-length 8000 \
-    --output predictions.json
-```
-
-The prediction script will:
-- Load the trained PubMedBERT model
-- Process the input PDF(s)
-- Output predictions with confidence scores
-- Optionally save results to a JSON file
-
 ## Directory Structure
 
+When downloading data in normal mode (not eval mode):
 ```
-.
-├── scripts/                # Main execution scripts
-│   ├── download_protocols.py  # Data collection script
-│   ├── train_models.py       # Model training script
-│   ├── classify_protocol.py  # Protocol classification script
-│   ├── evaluate_models.py    # Model evaluation script
-│   └── predict.py            # Prediction script
-├── models/                 # Model checkpoints and configurations
-├── logs/                  # Training and inference logs
-├── results/               # Classification results output
-├── utils/                 # Utility functions and helpers
-├── protocol_documents/    # Downloaded protocols
-│   ├── cancer/
-│   │   ├── train/
-│   │   ├── val/
-│   │   └── test/
-│   └── non_cancer/
-│       ├── train/
-│       ├── val/
-│       └── test/
-├── protocol_classifier/   # PubMedBERT model outputs
-│   ├── pytorch_model.bin
-│   ├── config.json
-│   └── eval_results.txt
-└── baseline_models/      # Traditional ML model outputs
-    ├── tfidf.joblib
-    ├── logistic_regression.joblib
-    └── svm.joblib
+clinical-trial-classifier/
+├── protocol_documents/       # Base directory for protocol documents
+│   ├── cancer/             # Cancer protocols
+│   │   ├── train/         # Training set
+│   │   ├── val/           # Validation set
+│   │   └── test/          # Test set
+│   └── non_cancer/        # Non-cancer protocols
+│       ├── train/         # Training set
+│       ├── val/           # Validation set
+│       └── test/          # Test set
+├── trained_models/         # Directory for trained models
+│   ├── biobert/           # Fine-tuned BioBERT model
+│   │   ├── pytorch_model.bin
+│   │   ├── config.json
+│   │   └── eval_results.txt
+│   ├── clinicalbert/      # Fine-tuned Bio_ClinicalBERT model
+│   │   ├── pytorch_model.bin
+│   │   ├── config.json
+│   │   └── eval_results.txt
+│   ├── pubmedbert/        # Fine-tuned PubMedBERT model
+│   │   ├── pytorch_model.bin
+│   │   ├── config.json
+│   │   └── eval_results.txt
+│   └── baseline/          # Traditional ML models
+│       ├── tfidf_vectorizer.pkl
+│       ├── logistic_regression.pkl
+│       └── svm.pkl
+└── scripts/               # Python scripts
+    ├── download_protocols.py
+    ├── train_models.py
+    ├── evaluate_models.py
+    └── predict.py
+
+When downloading in eval mode (--eval-mode):
 ```
+clinical-trial-classifier/
+├── protocol_documents/    # Base directory for protocol documents
+│   ├── cancer/          # Cancer protocols (no splits)
+│   └── non_cancer/     # Non-cancer protocols (no splits)
 
-## Model Details
+## Models
 
-1. **PubMedBERT Classifier**
-   - Fine-tuned on medical text
-   - Optimized for clinical trial protocols
-   - Best performance but requires training
-   - GPU/MPS accelerated when available
+The project uses several models for clinical trial protocol classification:
 
-2. **Traditional ML Baseline**
-   - TF-IDF vectorization with Logistic Regression and SVM
-   - Faster training and inference
-   - Lighter resource requirements
-   - Good baseline performance
+### BERT-based Models
+1. **BioBERT** (`dmis-lab/biobert-v1.1`)
+   - Specialized for biomedical text
+   - Pre-trained on PubMed abstracts and PMC full-text articles
 
-3. **Zero-shot Classifier**
-   - Uses RoBERTa-MNLI model
-   - No training required
-   - Can adapt to new categories
-   - Useful for quick prototyping
+2. **Bio_ClinicalBERT** (`emilyalsentzer/Bio_ClinicalBERT`)
+   - Optimized for clinical text
+   - Pre-trained on clinical notes from MIMIC-III
 
-## Notes
+3. **PubMedBERT** (`microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext`)
+   - Pre-trained from scratch on PubMed
+   - Uses both abstracts and full-text articles
 
-- The download script includes appropriate delays to respect ClinicalTrials.gov's servers
-- All models are optimized for Apple M1 chips and will automatically use the appropriate device
-- Training the PubMedBERT model requires significant computational resources
-- The traditional ML models provide a good balance of speed and accuracy
-- The zero-shot classifier is useful for quick experimentation without training
+### Traditional ML Models (Baselines)
+1. **TF-IDF + Logistic Regression**
+   - Uses TF-IDF vectorization
+   - Maximum text length: 8000 tokens
+
+2. **TF-IDF + SVM**
+   - Uses TF-IDF vectorization
+   - Linear kernel for efficiency
+
+All BERT models are fine-tuned on the clinical trial protocols with:
+- Maximum sequence length: 512 tokens
+- Batch size: 4
+- Learning rate: 2e-5
+- Warmup ratio: 0.1
+- Weight decay: 0.01
+- Early stopping with patience of 3
 
 ## Output Format
 
@@ -250,3 +260,12 @@ The output JSON file contains both individual results and performance summary:
         }
     }
 }
+```
+
+## Notes
+
+- The download script includes appropriate delays to respect ClinicalTrials.gov's servers
+- All models are optimized for Apple M1 chips and will automatically use the appropriate device
+- Training the PubMedBERT model requires significant computational resources
+- The traditional ML models provide a good balance of speed and accuracy
+- The zero-shot classifier is useful for quick experimentation without training

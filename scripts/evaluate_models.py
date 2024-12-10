@@ -8,313 +8,515 @@ import sys
 import os
 import numpy as np
 from tabulate import tabulate
+from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
+import pandas as pd
+from datetime import datetime
 
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(root_dir)
 
-from models import PubMedBERTClassifier, BaselineClassifiers
-
+from models.bert_classifier import BERTClassifier
+from models.baseline_classifiers import BaselineClassifiers
 
 class ProtocolClassifierEnsemble:
     def __init__(self,
-                 pubmedbert_path: str = "./protocol_classifier",
-                 baseline_path: str = "./baseline_models",
+                 trained_models_dir: str = "./trained_models",
                  max_length: int = 8000):
         """
         Initialize ensemble of classifiers.
         """
         self.logger = logging.getLogger(__name__)
-
+        self.classifiers = {}
+        self.models_dir = trained_models_dir
+        self.detailed_results = []  # Store detailed results for CSV
+        self.baseline_predictions = {}  # Store baseline predictions
+        
+        # Initialize BERT models
+        model_types = ['biobert', 'clinicalbert', 'pubmedbert']
+        for model_type in model_types:
+            model_path = os.path.join(trained_models_dir, model_type)
+            try:
+                self.classifiers[model_type] = BERTClassifier(
+                    model_type=model_type,
+                    model_path=model_path,
+                    max_length=max_length
+                )
+                self.logger.info(f"Loaded {model_type} classifier")
+            except Exception as e:
+                self.logger.error(f"Failed to load {model_type} classifier: {e}")
+        
+        # Initialize baseline models
         try:
-            self.pubmedbert = PubMedBERTClassifier(
-                model_path=pubmedbert_path,
-                max_length=max_length
-            )
-            self.logger.info("Loaded PubMedBERT classifier")
-        except Exception as e:
-            self.pubmedbert = None
-            self.logger.error(f"Failed to load PubMedBERT classifier: {e}")
-
-        try:
-            self.baseline = BaselineClassifiers(
-                model_dir=baseline_path,
-                max_length=max_length
-            )
-            self.baseline.load_traditional_models()
+            baseline_path = os.path.join(trained_models_dir, "baseline")
+            self.classifiers['baseline'] = BaselineClassifiers(model_dir=baseline_path)
             self.logger.info("Loaded baseline classifiers")
         except Exception as e:
-            self.baseline = None
             self.logger.error(f"Failed to load baseline classifiers: {e}")
 
-    def classify_pdf(self, pdf_path: Union[str, Path], true_label: str = None) -> Dict:
+    def classify_pdf(self, pdf_path: Union[str, Path]) -> Dict[str, Dict[str, Union[str, float]]]:
         """
-        Classify a single PDF using all available models.
+        Classify a PDF using all available classifiers.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            
+        Returns:
+            Dictionary with predictions from each classifier
         """
-        results = {
-            "file_name": str(pdf_path),
-            "true_label": true_label
-        }
-
-        if self.pubmedbert:
+        results = {}
+        for name, classifier in self.classifiers.items():
             try:
-                pubmedbert_result = self.pubmedbert.classify_pdf(pdf_path)
-                results["pubmedbert"] = {
-                    "classification": pubmedbert_result["classification"],
-                    "confidence": pubmedbert_result["confidence"]
+                results[name] = classifier.classify_pdf(pdf_path)
+            except Exception as e:
+                self.logger.error(f"Error with {name} classifier: {e}")
+                results[name] = {
+                    "file_name": str(pdf_path),
+                    "classification": "unknown",
+                    "confidence": 0.0,
+                    "error": str(e)
                 }
-            except Exception as e:
-                self.logger.error(f"PubMedBERT classification failed: {e}")
-                results["pubmedbert"] = {"error": str(e)}
+        return results
 
-        if self.baseline:
+    def evaluate_directory(self, directory: Union[str, Path], expected_class: str) -> Tuple[Dict[str, Dict[str, float]], Dict[str, List[int]]]:
+        """
+        Evaluate all classifiers on a directory of PDFs.
+        
+        Args:
+            directory: Path to directory containing PDFs
+            expected_class: Expected class label ('cancer' or 'non_cancer')
+            
+        Returns:
+            Dictionary with evaluation metrics for each classifier and a dictionary of predictions
+        """
+        directory = Path(directory)
+        pdf_files = list(directory.glob('*.pdf'))
+        
+        if not pdf_files:
+            self.logger.warning(f"No PDF files found in {directory}")
+            return {}, {}
+        
+        # Initialize results storage
+        predictions = {name: [] for name in self.classifiers.keys()}
+        self.baseline_predictions = {
+            'baseline_log_reg': [],
+            'baseline_svm': [],
+            'baseline_zero_shot': []
+        }
+        
+        # Clear previous detailed results
+        self.detailed_results = []
+        
+        # Set expected values (1 for cancer, 0 for non_cancer)
+        expected = [1 if expected_class == 'cancer' else 0] * len(pdf_files)
+        
+        # Create progress bars
+        self.logger.info(f"\nEvaluating {expected_class} protocols...")
+        main_pbar = tqdm(total=len(pdf_files), desc=f"Overall progress", position=0)
+        model_pbar = tqdm(total=len(self.classifiers), desc=f"Current file progress", position=1, leave=False)
+        
+        try:
+            # Process each file
+            for i, pdf_path in enumerate(pdf_files):
+                file_result = {
+                    'file_path': str(pdf_path),
+                    'expected_class': expected_class,
+                    'expected_label': expected[i]
+                }
+                
+                # Reset model progress bar for each file
+                model_pbar.reset()
+                model_pbar.set_description(f"Processing {pdf_path.name}")
+                
+                # Get predictions from each classifier
+                for name, classifier in self.classifiers.items():
+                    try:
+                        if isinstance(classifier, BERTClassifier):
+                            result = classifier.classify_pdf(pdf_path)
+                            pred_class = result.get('classification', '').lower()
+                            confidence = result.get('confidence', 0.0)
+                            pred = 1 if pred_class == 'cancer' else 0
+                            predictions[name].append(pred)
+                            
+                            # Store detailed results
+                            file_result[f'{name}_prediction'] = pred_class
+                            file_result[f'{name}_confidence'] = confidence
+                            file_result[f'{name}_numeric'] = pred
+                        else:  # Baseline classifier
+                            result = classifier.classify_pdf(pdf_path)
+                            # Check both logistic regression and SVM predictions
+                            log_reg_pred = result.get('traditional_ml', {}).get('log_reg_prediction', '').lower()
+                            svm_pred = result.get('traditional_ml', {}).get('svm_prediction', '').lower()
+                            log_reg_conf = result.get('traditional_ml', {}).get('log_reg_confidence', 0.0)
+                            svm_conf = result.get('traditional_ml', {}).get('svm_confidence', 0.0)
+                            
+                            # Store predictions separately for each baseline approach
+                            self.baseline_predictions['baseline_log_reg'].append(1 if log_reg_pred == 'cancer' else 0)
+                            self.baseline_predictions['baseline_svm'].append(1 if svm_pred == 'cancer' else 0)
+                            
+                            # Get zero-shot prediction
+                            zero_shot_result = result.get('zero_shot', {})
+                            zero_shot_pred = zero_shot_result.get('prediction', '').lower()
+                            zero_shot_conf = zero_shot_result.get('confidence', 0.0)
+                            self.baseline_predictions['baseline_zero_shot'].append(1 if zero_shot_pred == 'cancer' else 0)
+                            
+                            # Use logistic regression as primary prediction
+                            pred = 1 if log_reg_pred == 'cancer' else 0
+                            predictions[name].append(pred)
+                            
+                            # Store detailed results
+                            file_result[f'{name}_log_reg_prediction'] = log_reg_pred
+                            file_result[f'{name}_log_reg_confidence'] = log_reg_conf
+                            file_result[f'{name}_svm_prediction'] = svm_pred
+                            file_result[f'{name}_svm_confidence'] = svm_conf
+                            file_result[f'{name}_zero_shot_prediction'] = zero_shot_pred
+                            file_result[f'{name}_zero_shot_confidence'] = zero_shot_conf
+                            file_result[f'{name}_numeric'] = pred
+                    except Exception as e:
+                        self.logger.error(f"Error processing {pdf_path} with {name}: {e}")
+                        # Append a default prediction in case of error
+                        predictions[name].append(0)  # Default to non-cancer on error
+                        file_result[f'{name}_error'] = str(e)
+                    
+                    model_pbar.update(1)
+                
+                self.detailed_results.append(file_result)
+                main_pbar.update(1)
+            
+        finally:
+            # Close progress bars
+            model_pbar.close()
+            main_pbar.close()
+        
+        # Calculate metrics for each classifier
+        metrics = {}
+        for name, preds in predictions.items():
             try:
-                baseline_result = self.baseline.classify_pdf(pdf_path)
-                results["traditional_ml"] = baseline_result["traditional_ml"]
-                results["zero_shot"] = baseline_result["zero_shot"]
+                if not preds:
+                    raise ValueError(f"No predictions found for {name}")
+                
+                # Use binary average for metrics since we have binary classification
+                precision, recall, f1, _ = precision_recall_fscore_support(
+                    expected, preds, average='binary', zero_division=0
+                )
+                accuracy = accuracy_score(expected, preds)
+                
+                metrics[name] = {
+                    'accuracy': round(accuracy * 100, 2),
+                    'precision': round(precision * 100, 2),
+                    'recall': round(recall * 100, 2),
+                    'f1': round(f1 * 100, 2)
+                }
+                
+                # Print confusion matrix for debugging
+                cm = confusion_matrix(expected, preds)
+                self.logger.info(f"\nConfusion Matrix for {name}:")
+                self.logger.info("Predicted:")
+                self.logger.info("                Non-Cancer    Cancer")
+                self.logger.info("Actual:")
+                self.logger.info(f"Non-Cancer     {cm[0][0]:^10}    {cm[0][1]:^6}")
+                self.logger.info(f"Cancer         {cm[1][0]:^10}    {cm[1][1]:^6}")
+                self.logger.info("")
+                
             except Exception as e:
-                self.logger.error(f"Baseline classification failed: {e}")
-                results["baseline"] = {"error": str(e)}
-
-        return results
-
-    def process_protocol_directories(self, cancer_dir: Union[str, Path], non_cancer_dir: Union[str, Path]) -> List[
-        Dict]:
-        """
-        Process all PDFs in cancer and non-cancer directories.
-        """
-        results = []
-
-        # Process cancer protocols
-        cancer_dir = Path(cancer_dir)
-        cancer_pdfs = list(cancer_dir.glob("**/*.pdf"))
-        self.logger.info(f"Found {len(cancer_pdfs)} cancer protocol PDFs in {cancer_dir}")
-        for pdf_path in cancer_pdfs:
-            result = self.classify_pdf(pdf_path, true_label="cancer")
-            results.append(result)
-
-        # Process non-cancer protocols
-        non_cancer_dir = Path(non_cancer_dir)
-        non_cancer_pdfs = list(non_cancer_dir.glob("**/*.pdf"))
-        self.logger.info(f"Found {len(non_cancer_pdfs)} non-cancer protocol PDFs in {non_cancer_dir}")
-        for pdf_path in non_cancer_pdfs:
-            result = self.classify_pdf(pdf_path, true_label="non-cancer")
-            results.append(result)
-
-        return results
-
-    def generate_performance_summary(self, results: List[Dict]) -> Dict:
-        """
-        Generate comprehensive performance metrics for all models.
-        """
-        summary = {
-            "total_documents": len(results),
-            "model_metrics": {},
-            "confidence_stats": {},
-            "confusion_matrices": {},
-            "error_rates": {}
-        }
-
-        # Initialize data structures for predictions and true labels
-        model_data = {
-            "pubmedbert": {"preds": [], "conf": [], "true": [], "errors": 0},
-            "log_reg": {"preds": [], "conf": [], "true": [], "errors": 0},
-            "svm": {"preds": [], "conf": [], "true": [], "errors": 0},
-            "zero_shot": {"preds": [], "conf": [], "true": [], "errors": 0}
-        }
-
-        # Collect predictions and confidences
-        for result in results:
-            true_label = result["true_label"]
-
-            # PubMedBERT
-            if "pubmedbert" in result and "error" not in result["pubmedbert"]:
-                pub = result["pubmedbert"]
-                model_data["pubmedbert"]["preds"].append(pub["classification"])
-                model_data["pubmedbert"]["conf"].append(pub["confidence"])
-                model_data["pubmedbert"]["true"].append(true_label)
-            else:
-                model_data["pubmedbert"]["errors"] += 1
-
-            # Traditional ML
-            if "traditional_ml" in result and "error" not in result["traditional_ml"]:
-                trad = result["traditional_ml"]
-
-                # Logistic Regression
-                if "log_reg_prediction" in trad:
-                    model_data["log_reg"]["preds"].append(trad["log_reg_prediction"])
-                    model_data["log_reg"]["conf"].append(trad["log_reg_confidence"])
-                    model_data["log_reg"]["true"].append(true_label)
-                else:
-                    model_data["log_reg"]["errors"] += 1
-
-                # SVM
-                if "svm_prediction" in trad:
-                    model_data["svm"]["preds"].append(trad["svm_prediction"])
-                    model_data["svm"]["conf"].append(trad["svm_confidence"])
-                    model_data["svm"]["true"].append(true_label)
-                else:
-                    model_data["svm"]["errors"] += 1
-            else:
-                model_data["log_reg"]["errors"] += 1
-                model_data["svm"]["errors"] += 1
-
-            # Zero-shot
-            if "zero_shot" in result and "error" not in result["zero_shot"]:
-                zero = result["zero_shot"]
-                model_data["zero_shot"]["preds"].append(zero["prediction"])
-                model_data["zero_shot"]["conf"].append(zero["confidence"])
-                model_data["zero_shot"]["true"].append(true_label)
-            else:
-                model_data["zero_shot"]["errors"] += 1
-
-        # Calculate metrics for each model
-        for model_name, data in model_data.items():
-            if data["preds"]:  # Only calculate metrics if we have predictions
-                try:
-                    # Calculate basic metrics
-                    accuracy = accuracy_score(data["true"], data["preds"])
-                    precision, recall, f1, _ = precision_recall_fscore_support(
-                        data["true"], data["preds"],
-                        average='weighted',
-                        zero_division=0
-                    )
-
-                    summary["model_metrics"][model_name] = {
-                        "accuracy": accuracy * 100,
-                        "precision": precision * 100,
-                        "recall": recall * 100,
-                        "f1_score": f1 * 100
-                    }
-
-                    # Calculate confusion matrix
-                    conf_matrix = confusion_matrix(
-                        data["true"],
-                        data["preds"],
-                        labels=["cancer", "non-cancer"]
-                    )
-                    summary["confusion_matrices"][model_name] = conf_matrix.tolist()
-
-                    # Calculate confidence statistics
-                    if data["conf"]:
-                        summary["confidence_stats"][model_name] = {
-                            "mean": np.mean(data["conf"]),
-                            "median": np.median(data["conf"]),
-                            "std": np.std(data["conf"]),
-                            "min": min(data["conf"]),
-                            "max": max(data["conf"])
-                        }
-
-                except Exception as e:
-                    self.logger.error(f"Error calculating metrics for {model_name}: {e}")
-
-            # Calculate error rate
-            summary["error_rates"][model_name] = (data["errors"] / summary["total_documents"]) * 100
-
-        return summary
-
+                self.logger.error(f"Error calculating metrics for {name}: {e}")
+                metrics[name] = {
+                    'accuracy': 0.0,
+                    'precision': 0.0,
+                    'recall': 0.0,
+                    'f1': 0.0,
+                    'error': str(e)
+                }
+        
+        # Calculate and display metrics for baseline approaches
+        if 'baseline' in predictions:
+            self.logger.info("\nDetailed Baseline Model Results:")
+            for approach, preds in self.baseline_predictions.items():
+                if preds:  # Only calculate if we have predictions
+                    try:
+                        # Calculate metrics with zero_division=0
+                        precision, recall, f1, _ = precision_recall_fscore_support(
+                            expected, preds, average='binary', zero_division=0, labels=[0, 1]
+                        )
+                        accuracy = accuracy_score(expected, preds)
+                        
+                        # Calculate confusion matrix with correct label ordering
+                        cm = confusion_matrix(expected, preds, labels=[0, 1])
+                        
+                        # Print confusion matrix with clear labels
+                        self.logger.info(f"\nConfusion Matrix for {approach}:")
+                        self.logger.info("Predicted:")
+                        self.logger.info("                Non-Cancer    Cancer")
+                        self.logger.info("Actual:")
+                        self.logger.info(f"Non-Cancer     {cm[0][0]:^10}    {cm[0][1]:^6}")
+                        self.logger.info(f"Cancer         {cm[1][0]:^10}    {cm[1][1]:^6}")
+                        self.logger.info("")
+                        
+                        self.logger.info(f"Metrics for {approach}:")
+                        self.logger.info(f"Accuracy: {accuracy * 100:.2f}%")
+                        self.logger.info(f"Precision: {precision * 100:.2f}%")
+                        self.logger.info(f"Recall: {recall * 100:.2f}%")
+                        self.logger.info(f"F1: {f1 * 100:.2f}%")
+                    except Exception as e:
+                        self.logger.error(f"Error calculating metrics for {approach}: {e}")
+        
+        return metrics, predictions
 
 def format_summary(summary: Dict) -> str:
-    """Format performance summary for display."""
-    output = ["\n=== Model Performance Summary ===\n"]
-
-    # Basic stats
-    output.append(f"Total documents processed: {summary['total_documents']}")
-
-    # Model metrics
-    output.append("\nModel Performance Metrics:")
-    metrics_table = []
-    headers = ["Model", "Accuracy", "Precision", "Recall", "F1 Score"]
-    for model, metrics in summary["model_metrics"].items():
-        row = [
-            model,
-            f"{metrics['accuracy']:.2f}%",
-            f"{metrics['precision']:.2f}%",
-            f"{metrics['recall']:.2f}%",
-            f"{metrics['f1_score']:.2f}%"
-        ]
-        metrics_table.append(row)
-    output.append(tabulate(metrics_table, headers=headers, tablefmt="simple"))
-
-    # Confusion matrices
-    output.append("\nConfusion Matrices:")
-    for model, matrix in summary["confusion_matrices"].items():
-        output.append(f"\n{model.upper()}:")
-        conf_table = tabulate(matrix,
-                              headers=["Predicted Cancer", "Predicted Non-cancer"],
-                              showindex=["Actual Cancer", "Actual Non-cancer"],
-                              tablefmt="simple")
-        output.append(conf_table)
-
-    # Confidence statistics
-    if summary["confidence_stats"]:
-        output.append("\nConfidence Statistics:")
-        conf_table = []
-        headers = ["Model", "Mean", "Median", "Std Dev", "Min", "Max"]
-        for model, stats in summary["confidence_stats"].items():
-            row = [
-                model,
-                f"{stats['mean']:.2f}%",
-                f"{stats['median']:.2f}%",
-                f"{stats['std']:.2f}%",
-                f"{stats['min']:.2f}%",
-                f"{stats['max']:.2f}%"
-            ]
-            conf_table.append(row)
-        output.append(tabulate(conf_table, headers=headers, tablefmt="simple"))
-
-    # Error rates
-    output.append("\nError Rates:")
-    error_table = [[model, f"{rate:.2f}%"]
-                   for model, rate in summary["error_rates"].items()]
-    output.append(tabulate(error_table, headers=["Model", "Error Rate"], tablefmt="simple"))
-
-    return "\n".join(output)
-
+    """Format evaluation summary for display."""
+    # Define model display names
+    model_display_names = {
+        'biobert': 'BioBERT',
+        'clinicalbert': 'ClinicalBERT',
+        'pubmedbert': 'PubMedBERT',
+        'baseline': 'Baseline (LogReg)',
+        'baseline_log_reg': 'Baseline LogReg',
+        'baseline_svm': 'Baseline SVM',
+        'baseline_zero_shot': 'Baseline Zero-Shot'
+    }
+    
+    # Prepare rows with sorted model names
+    rows = []
+    for model_name in sorted(summary.keys()):
+        metrics = summary[model_name]
+        if 'error' not in metrics:
+            display_name = model_display_names.get(model_name, model_name)
+            rows.append([
+                display_name,
+                f"{metrics['accuracy']:>6.2f}%",
+                f"{metrics['precision']:>6.2f}%",
+                f"{metrics['recall']:>6.2f}%",
+                f"{metrics['f1']:>6.2f}%"
+            ])
+    
+    # Create table with headers
+    headers = ['Model', 'Accuracy', 'Precision', 'Recall', 'F1']
+    table = tabulate(rows, headers=headers, tablefmt='grid', numalign='right')
+    
+    return table
 
 def main():
-    parser = argparse.ArgumentParser(description='Classify and evaluate clinical trial protocols')
-    parser.add_argument('--cancer-dir', required=True, help='Directory containing cancer protocol PDFs')
-    parser.add_argument('--non-cancer-dir', required=True, help='Directory containing non-cancer protocol PDFs')
-    parser.add_argument('--output', help='Path to save results JSON file')
+    parser = argparse.ArgumentParser(description='Evaluate protocol classifiers')
+    parser.add_argument('--cancer-dir', required=True,
+                        help='Directory containing cancer protocol PDFs')
+    parser.add_argument('--non-cancer-dir', required=True,
+                        help='Directory containing non-cancer protocol PDFs')
+    parser.add_argument('--models-dir', default='./trained_models',
+                        help='Directory containing trained models')
     parser.add_argument('--max-length', type=int, default=8000,
                         help='Maximum text length to process')
-    parser.add_argument('--pubmedbert-path', default='./protocol_classifier',
-                        help='Path to PubMedBERT model')
-    parser.add_argument('--baseline-path', default='./baseline_models',
-                        help='Path to baseline models')
+    parser.add_argument('--model', choices=['biobert', 'clinicalbert', 'pubmedbert', 'baseline'],
+                        help='Specify a single model to evaluate. If not provided, all models will be evaluated.')
+    parser.add_argument('--output-dir', default=None,
+                        help='Directory to save detailed results. If not provided, uses models-dir')
     args = parser.parse_args()
 
-    # Setup logging
+    # Set up logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
+    logger = logging.getLogger(__name__)
 
-    # Initialize classifier ensemble
-    classifier = ProtocolClassifierEnsemble(
-        pubmedbert_path=args.pubmedbert_path,
-        baseline_path=args.baseline_path,
+    # Set output directory
+    output_dir = args.output_dir if args.output_dir else args.models_dir
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Initialize ensemble
+    ensemble = ProtocolClassifierEnsemble(
+        trained_models_dir=args.models_dir,
         max_length=args.max_length
     )
 
-    # Process directories and generate results
-    results = classifier.process_protocol_directories(args.cancer_dir, args.non_cancer_dir)
+    # If a specific model is selected, keep only that model
+    if args.model:
+        if args.model in ensemble.classifiers:
+            selected_classifier = ensemble.classifiers[args.model]
+            ensemble.classifiers.clear()
+            ensemble.classifiers[args.model] = selected_classifier
+            logger.info(f"Evaluating only the {args.model} model")
+        else:
+            logger.error(f"Model {args.model} not found or failed to load")
+            return
 
-    # Generate and display performance summary
-    summary = classifier.generate_performance_summary(results)
+    # Store all detailed results
+    all_results = []
+    all_predictions = {name: [] for name in ensemble.classifiers.keys()}
+    all_baseline_predictions = {
+        'baseline_log_reg': [],
+        'baseline_svm': [],
+        'baseline_zero_shot': []
+    }
+    all_labels = []
+
+    # First evaluate cancer protocols (positive class)
+    logger.info("\nEvaluating cancer protocols...")
+    cancer_metrics, cancer_predictions = ensemble.evaluate_directory(args.cancer_dir, 'cancer')
+    
+    # Store cancer protocol results
+    for file_result in ensemble.detailed_results:
+        file_result['dataset'] = 'cancer'
+        all_results.append(file_result)
+    
+    # Store cancer predictions and labels
+    cancer_count = len(ensemble.detailed_results)
+    all_labels.extend([1] * cancer_count)
+    for name, preds in cancer_predictions.items():
+        all_predictions[name].extend(preds)
+    for name, preds in ensemble.baseline_predictions.items():
+        all_baseline_predictions[name].extend(preds)
+    
+    # Then evaluate non-cancer protocols (negative class)
+    logger.info("\nEvaluating non-cancer protocols...")
+    non_cancer_metrics, non_cancer_predictions = ensemble.evaluate_directory(args.non_cancer_dir, 'non_cancer')
+    
+    # Store non-cancer protocol results
+    for file_result in ensemble.detailed_results:
+        file_result['dataset'] = 'non_cancer'
+        all_results.append(file_result)
+    
+    # Store non-cancer predictions and labels
+    non_cancer_count = len(ensemble.detailed_results)
+    all_labels.extend([0] * non_cancer_count)
+    for name, preds in non_cancer_predictions.items():
+        all_predictions[name].extend(preds)
+    for name, preds in ensemble.baseline_predictions.items():
+        all_baseline_predictions[name].extend(preds)
+
+    # Calculate and display combined metrics for all models
+    logger.info("\nDetailed Results by Model:")
+    for name in ensemble.classifiers.keys():
+        if name in all_predictions:
+            preds = all_predictions[name]
+            # Calculate metrics
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                all_labels, preds, average='binary', zero_division=0
+            )
+            accuracy = accuracy_score(all_labels, preds)
+            
+            # Calculate confusion matrix
+            cm = confusion_matrix(all_labels, preds)
+            
+            logger.info(f"\nResults for {name}:")
+            logger.info("Confusion Matrix:")
+            logger.info("Predicted:")
+            logger.info("                Non-Cancer    Cancer")
+            logger.info("Actual:")
+            logger.info(f"Non-Cancer     {cm[0][0]:^10}    {cm[0][1]:^6}")
+            logger.info(f"Cancer         {cm[1][0]:^10}    {cm[1][1]:^6}")
+            logger.info("")
+            logger.info(f"Accuracy:  {accuracy * 100:.2f}%")
+            logger.info(f"Precision: {precision * 100:.2f}%")
+            logger.info(f"Recall:    {recall * 100:.2f}%")
+            logger.info(f"F1:        {f1 * 100:.2f}%")
+    
+    # Calculate and display combined metrics for baseline approaches
+    logger.info("\nDetailed Results by Baseline Approach:")
+    for approach in all_baseline_predictions.keys():
+        preds = all_baseline_predictions[approach]
+        if preds:
+            # Calculate metrics
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                all_labels, preds, average='binary', zero_division=0
+            )
+            accuracy = accuracy_score(all_labels, preds)
+            
+            # Calculate confusion matrix
+            cm = confusion_matrix(all_labels, preds)
+            
+            logger.info(f"\nResults for {approach}:")
+            logger.info("Confusion Matrix:")
+            logger.info("Predicted:")
+            logger.info("                Non-Cancer    Cancer")
+            logger.info("Actual:")
+            logger.info(f"Non-Cancer     {cm[0][0]:^10}    {cm[0][1]:^6}")
+            logger.info(f"Cancer         {cm[1][0]:^10}    {cm[1][1]:^6}")
+            logger.info("")
+            logger.info(f"Accuracy:  {accuracy * 100:.2f}%")
+            logger.info(f"Precision: {precision * 100:.2f}%")
+            logger.info(f"Recall:    {recall * 100:.2f}%")
+            logger.info(f"F1:        {f1 * 100:.2f}%")
+
+    # Save detailed results to CSV
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    detailed_csv = os.path.join(output_dir, f"detailed_predictions_{timestamp}.csv")
+    df = pd.DataFrame(all_results)
+    
+    # Reorder columns for better readability
+    columns = ['dataset', 'file_path', 'expected_class']
+    for model in ensemble.classifiers.keys():
+        if model == 'baseline':
+            columns.extend([
+                f'{model}_log_reg_prediction',
+                f'{model}_log_reg_confidence',
+                f'{model}_svm_prediction',
+                f'{model}_svm_confidence',
+                f'{model}_zero_shot_prediction',
+                f'{model}_zero_shot_confidence'
+            ])
+        else:
+            columns.extend([
+                f'{model}_prediction',
+                f'{model}_confidence'
+            ])
+    
+    # Add any remaining columns not explicitly ordered
+    remaining_cols = [col for col in df.columns if col not in columns]
+    columns.extend(remaining_cols)
+    
+    # Reorder and save
+    df = df[columns]
+    df.to_csv(detailed_csv, index=False)
+    logger.info(f"\nDetailed predictions saved to: {detailed_csv}")
+
+    # Save summary results
+    summary = {}
+    for name in ensemble.classifiers.keys():
+        preds = all_predictions[name]
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            all_labels, preds, average='binary', zero_division=0
+        )
+        accuracy = accuracy_score(all_labels, preds)
+        
+        summary[name] = {
+            'accuracy': round(accuracy * 100, 2),
+            'precision': round(precision * 100, 2),
+            'recall': round(recall * 100, 2),
+            'f1': round(f1 * 100, 2)
+        }
+    
+    # Add baseline model results to summary
+    for approach in all_baseline_predictions.keys():
+        preds = all_baseline_predictions[approach]
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            all_labels, preds, average='binary', zero_division=0
+        )
+        accuracy = accuracy_score(all_labels, preds)
+        
+        summary[approach] = {
+            'accuracy': round(accuracy * 100, 2),
+            'precision': round(precision * 100, 2),
+            'recall': round(recall * 100, 2),
+            'f1': round(f1 * 100, 2)
+        }
+
+    # Display final comparison table
+    logger.info("\nFinal Model Comparison:")
     print(format_summary(summary))
 
-    # Save results if output path provided
-    if args.output:
-        output_data = {
-            "results": results,
-            "summary": summary
-        }
-        with open(args.output, 'w') as f:
-            json.dump(output_data, f, indent=2)
-        print(f"\nResults and summary saved to {args.output}")
-
+    # Save results
+    results = {
+        'cancer': cancer_metrics,
+        'non_cancer': non_cancer_metrics,
+        'combined': summary,
+        'detailed_predictions_file': detailed_csv
+    }
+    
+    results_file = os.path.join(output_dir, f"evaluation_results_{timestamp}.json")
+    with open(results_file, "w") as f:
+        json.dump(results, f, indent=4)
+    
+    logger.info(f"\nResults summary saved to: {results_file}")
 
 if __name__ == "__main__":
     main()
