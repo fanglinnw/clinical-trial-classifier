@@ -23,9 +23,9 @@ sys.path.append(root_dir)
 
 from models.bert_classifier import BERTClassifier
 from models.baseline_classifiers import BaselineClassifiers
-from utils.text_extractor import ProtocolTextExtractor
+from utils.text_extractor import get_extractor
 
-def load_data_from_directory(base_dir: str, extractor: ProtocolTextExtractor, split: str = "train", use_cache: bool = True) -> pd.DataFrame:
+def load_data_from_directory(base_dir: str, extractor, split: str = "train", use_cache: bool = True) -> pd.DataFrame:
     """
     Load data from protocol_documents directory structure for a specific split (train/val/test).
     Uses caching to avoid re-processing PDFs.
@@ -340,6 +340,8 @@ def main():
     parser.add_argument("--model", choices=['biobert', 'clinicalbert', 'pubmedbert', 'baseline'],
                       help="Train only a specific model. If not provided, all models will be trained.")
     parser.add_argument("--no-cache", action="store_true", help="Force re-processing of PDFs without using cache")
+    parser.add_argument("--extractor-type", choices=['simple', 'sections'], default='simple',
+                      help="Type of text extractor to use (default: simple)")
     args = parser.parse_args()
 
     # Set up logging
@@ -353,7 +355,7 @@ def main():
     torch.manual_seed(args.seed)
     
     # Initialize text extractor
-    extractor = ProtocolTextExtractor(max_length=args.max_text_length)
+    extractor = get_extractor(args.extractor_type)
     
     # Load train, validation and test data
     train_data = load_data_from_directory(args.data_dir, extractor, "train", not args.no_cache)

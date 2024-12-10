@@ -31,7 +31,7 @@ class ProtocolClassifierEnsemble:
         Args:
             trained_models_dir: Directory containing trained models
             max_length: Maximum length of input text
-            extractor_type: Type of text extractor to use ('simple' or 'section')
+            extractor_type: Type of text extractor to use ('simple' or 'sections')
         """
         self.logger = logging.getLogger(__name__)
         self.classifiers = {}
@@ -317,8 +317,8 @@ def main():
                         help='Directory containing trained models')
     parser.add_argument('--max-length', type=int, default=8000,
                         help='Maximum text length to process')
-    parser.add_argument('--extractor-type', type=str, choices=['simple', 'section'],
-                        default='simple', help='Type of text extractor to use')
+    parser.add_argument('--extractor-type', type=str, choices=['simple', 'sections'],
+                        default='simple', help='Type of text extractor to use (default: simple)')
     parser.add_argument('--model', choices=['biobert', 'clinicalbert', 'pubmedbert', 'baseline'],
                         help='Specify a single model to evaluate. If not provided, all models will be evaluated.')
     parser.add_argument('--output-dir', default=None,
