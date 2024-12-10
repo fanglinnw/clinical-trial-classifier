@@ -10,12 +10,19 @@ from transformers import pipeline, AutoTokenizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import LinearSVC
-from utils.text_extractor import ProtocolTextExtractor
+from utils.text_extractor import get_extractor
 
 
 class BaselineClassifiers:
-    def __init__(self, model_dir: str = "./trained_models/baseline", max_length: int = 8000):
-        """Initialize baseline classifiers."""
+    def __init__(self, model_dir: str = "./trained_models/baseline", max_length: int = 8000, extractor_type: str = "simple"):
+        """
+        Initialize baseline classifiers.
+        
+        Args:
+            model_dir: Directory containing trained models
+            max_length: Maximum length of input text
+            extractor_type: Type of text extractor to use ('simple' or 'section')
+        """
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(exist_ok=True, parents=True)
         
@@ -31,7 +38,7 @@ class BaselineClassifiers:
         self.device = device_name
         
         # Initialize text extractor
-        self.extractor = ProtocolTextExtractor(max_length=max_length)
+        self.extractor = get_extractor(extractor_type)
         
         # Initialize zero-shot classifier and tokenizer
         self.logger.info("Loading zero-shot classifier...")

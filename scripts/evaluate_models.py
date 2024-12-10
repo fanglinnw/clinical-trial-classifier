@@ -12,6 +12,7 @@ from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 import pandas as pd
 from datetime import datetime
+from utils.text_extractor import get_extractor
 
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(root_dir)
@@ -22,9 +23,15 @@ from models.baseline_classifiers import BaselineClassifiers
 class ProtocolClassifierEnsemble:
     def __init__(self,
                  trained_models_dir: str = "./trained_models",
-                 max_length: int = 8000):
+                 max_length: int = 8000,
+                 extractor_type: str = "simple"):
         """
         Initialize ensemble of classifiers.
+        
+        Args:
+            trained_models_dir: Directory containing trained models
+            max_length: Maximum length of input text
+            extractor_type: Type of text extractor to use ('simple' or 'section')
         """
         self.logger = logging.getLogger(__name__)
         self.classifiers = {}
@@ -40,7 +47,8 @@ class ProtocolClassifierEnsemble:
                 self.classifiers[model_type] = BERTClassifier(
                     model_type=model_type,
                     model_path=model_path,
-                    max_length=max_length
+                    max_length=max_length,
+                    extractor_type=extractor_type
                 )
                 self.logger.info(f"Loaded {model_type} classifier")
             except Exception as e:
@@ -49,7 +57,11 @@ class ProtocolClassifierEnsemble:
         # Initialize baseline models
         try:
             baseline_path = os.path.join(trained_models_dir, "baseline")
-            self.classifiers['baseline'] = BaselineClassifiers(model_dir=baseline_path)
+            self.classifiers['baseline'] = BaselineClassifiers(
+                model_dir=baseline_path,
+                max_length=max_length,
+                extractor_type=extractor_type
+            )
             self.logger.info("Loaded baseline classifiers")
         except Exception as e:
             self.logger.error(f"Failed to load baseline classifiers: {e}")
@@ -305,6 +317,8 @@ def main():
                         help='Directory containing trained models')
     parser.add_argument('--max-length', type=int, default=8000,
                         help='Maximum text length to process')
+    parser.add_argument('--extractor-type', type=str, choices=['simple', 'section'],
+                        default='simple', help='Type of text extractor to use')
     parser.add_argument('--model', choices=['biobert', 'clinicalbert', 'pubmedbert', 'baseline'],
                         help='Specify a single model to evaluate. If not provided, all models will be evaluated.')
     parser.add_argument('--output-dir', default=None,
@@ -325,7 +339,8 @@ def main():
     # Initialize ensemble
     ensemble = ProtocolClassifierEnsemble(
         trained_models_dir=args.models_dir,
-        max_length=args.max_length
+        max_length=args.max_length,
+        extractor_type=args.extractor_type
     )
 
     # If a specific model is selected, keep only that model

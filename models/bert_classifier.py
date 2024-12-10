@@ -5,7 +5,7 @@ import logging
 import platform
 from typing import Dict, Union
 from tqdm import tqdm
-from utils.text_extractor import ProtocolTextExtractor
+from utils.text_extractor import get_extractor
 
 class BERTClassifier:
     MODEL_PATHS = {
@@ -14,7 +14,7 @@ class BERTClassifier:
         'pubmedbert': "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext"
     }
 
-    def __init__(self, model_type: str, model_path: str = None, max_length: int = 8000):
+    def __init__(self, model_type: str, model_path: str = None, max_length: int = 8000, extractor_type: str = "simple"):
         """
         Initialize the classifier.
         
@@ -22,6 +22,7 @@ class BERTClassifier:
             model_type: Type of BERT model ('biobert', 'clinicalbert', or 'pubmedbert')
             model_path: Path to fine-tuned model. If None, uses the base model.
             max_length: Maximum length for text extraction
+            extractor_type: Type of text extractor to use ('simple' or 'section')
         """
         if model_type not in self.MODEL_PATHS:
             raise ValueError(f"model_type must be one of {list(self.MODEL_PATHS.keys())}")
@@ -37,7 +38,7 @@ class BERTClassifier:
         self.logger.info(f"Using device: {device_name}")
         
         # Initialize text extractor
-        self.extractor = ProtocolTextExtractor(max_length=max_length)
+        self.extractor = get_extractor(extractor_type)
         
         try:
             if model_path and Path(model_path).exists():
