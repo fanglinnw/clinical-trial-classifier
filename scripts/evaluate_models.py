@@ -350,6 +350,9 @@ def main():
             selected_classifier = ensemble.classifiers[args.model]
             ensemble.classifiers.clear()
             ensemble.classifiers[args.model] = selected_classifier
+            # Clear baseline predictions if a non-baseline model is selected
+            if args.model != 'baseline':
+                ensemble.baseline_predictions = {}
             logger.info(f"Evaluating only the {args.model} model")
         else:
             logger.error(f"Model {args.model} not found or failed to load")
@@ -358,11 +361,14 @@ def main():
     # Store all detailed results
     all_results = []
     all_predictions = {name: [] for name in ensemble.classifiers.keys()}
-    all_baseline_predictions = {
-        'baseline_log_reg': [],
-        'baseline_svm': [],
-        'baseline_zero_shot': []
-    }
+    # Only initialize baseline predictions if baseline model is included
+    all_baseline_predictions = {}
+    if 'baseline' in ensemble.classifiers or not args.model:
+        all_baseline_predictions = {
+            'baseline_log_reg': [],
+            'baseline_svm': [],
+            'baseline_zero_shot': []
+        }
     all_labels = []
 
     # First evaluate cancer protocols (positive class)

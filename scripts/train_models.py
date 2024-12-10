@@ -25,39 +25,19 @@ from models.bert_classifier import BERTClassifier
 from models.baseline_classifiers import BaselineClassifiers
 from utils.text_extractor import get_extractor
 
-def load_data_from_directory(base_dir: str, extractor, split: str = "train", use_cache: bool = True) -> pd.DataFrame:
+def load_data_from_directory(base_dir: str, extractor, split: str = "train") -> pd.DataFrame:
     """
     Load data from protocol_documents directory structure for a specific split (train/val/test).
-    Uses caching to avoid re-processing PDFs.
     
     Args:
         base_dir: Base directory containing cancer and non_cancer subdirectories
         extractor: Text extractor instance
         split: Which split to load ('train', 'val', or 'test')
-        use_cache: Whether to use caching or not
     
     Returns:
         DataFrame containing the data for the specified split
     """
     logger = logging.getLogger(__name__)
-    
-    # Create cache directory if it doesn't exist
-    cache_dir = os.path.join(base_dir, 'cache')
-    os.makedirs(cache_dir, exist_ok=True)
-    
-    # Define cache file path
-    cache_file = os.path.join(cache_dir, f'{split}_data.pkl')
-    
-    # Try to load from cache first
-    if use_cache and os.path.exists(cache_file):
-        logger.info(f"Loading {split} data from cache...")
-        try:
-            df = pd.read_pickle(cache_file)
-            logger.info(f"Successfully loaded {len(df)} samples from cache")
-            return df
-        except Exception as e:
-            logger.warning(f"Failed to load cache, will process PDFs: {e}")
-    
     data = []
     
     # Process cancer protocols
@@ -93,16 +73,6 @@ def load_data_from_directory(base_dir: str, extractor, split: str = "train", use
     df = df.sample(frac=1, random_state=42).reset_index(drop=True)
     
     logger.info(f"{split.capitalize()} set size: {len(df)}")
-    
-    # Save to cache
-    if use_cache:
-        try:
-            logger.info(f"Saving {split} data to cache...")
-            df.to_pickle(cache_file)
-            logger.info("Cache saved successfully")
-        except Exception as e:
-            logger.warning(f"Failed to save cache: {e}")
-    
     return df
 
 def train_baseline_models(
@@ -337,9 +307,9 @@ def main():
     parser.add_argument("--early-stopping-patience", type=int, default=3, help="Early stopping patience")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--max-text-length", type=int, default=8000, help="Maximum text length for extraction")
+    parser.add_argument("--max-dataset-size", type=int, help="Maximum number of documents to use for training (if not specified, uses all available documents)")
     parser.add_argument("--model", choices=['biobert', 'clinicalbert', 'pubmedbert', 'baseline'],
                       help="Train only a specific model. If not provided, all models will be trained.")
-    parser.add_argument("--no-cache", action="store_true", help="Force re-processing of PDFs without using cache")
     parser.add_argument("--extractor-type", choices=['simple', 'sections'], default='simple',
                       help="Type of text extractor to use (default: simple)")
     args = parser.parse_args()
@@ -358,9 +328,45 @@ def main():
     extractor = get_extractor(args.extractor_type)
     
     # Load train, validation and test data
-    train_data = load_data_from_directory(args.data_dir, extractor, "train", not args.no_cache)
-    val_data = load_data_from_directory(args.data_dir, extractor, "val", not args.no_cache)
-    test_data = load_data_from_directory(args.data_dir, extractor, "test", not args.no_cache)
+    all_data = []
+    for split in ["train", "val", "test"]:
+        split_data = load_data_from_directory(args.data_dir, extractor, split)
+        all_data.append(split_data)
+    
+    # Combine all data
+    combined_data = pd.concat(all_data, ignore_index=True)
+    
+    # If max_dataset_size is specified, randomly sample the data while maintaining class balance
+    if args.max_dataset_size and len(combined_data) > args.max_dataset_size:
+        logger.info(f"Limiting dataset size to {args.max_dataset_size} documents (from {len(combined_data)} total)")
+        
+        # Split by class
+        cancer_docs = combined_data[combined_data['label'] == 1]
+        non_cancer_docs = combined_data[combined_data['label'] == 0]
+        
+        # Calculate samples per class (half of max_dataset_size for each class)
+        samples_per_class = args.max_dataset_size // 2
+        
+        # Sample equally from each class
+        sampled_cancer = cancer_docs.sample(n=samples_per_class, random_state=args.seed)
+        sampled_non_cancer = non_cancer_docs.sample(n=samples_per_class, random_state=args.seed)
+        
+        # Combine sampled data
+        combined_data = pd.concat([sampled_cancer, sampled_non_cancer], ignore_index=True)
+        logger.info(f"Selected {len(sampled_cancer)} cancer and {len(sampled_non_cancer)} non-cancer documents")
+    
+    # Calculate split sizes
+    total_size = len(combined_data)
+    train_size = int(0.7 * total_size)
+    val_size = int(0.15 * total_size)
+    
+    # Shuffle and split the data
+    shuffled_data = combined_data.sample(frac=1, random_state=args.seed)
+    train_data = shuffled_data[:train_size]
+    val_data = shuffled_data[train_size:train_size + val_size]
+    test_data = shuffled_data[train_size + val_size:]
+    
+    logger.info(f"Dataset sizes - Train: {len(train_data)}, Validation: {len(val_data)}, Test: {len(test_data)}")
     
     # Create output directories
     os.makedirs(args.output_dir, exist_ok=True)
