@@ -385,8 +385,10 @@ def main():
     all_labels.extend([1] * cancer_count)
     for name, preds in cancer_predictions.items():
         all_predictions[name].extend(preds)
-    for name, preds in ensemble.baseline_predictions.items():
-        all_baseline_predictions[name].extend(preds)
+    # Only process baseline predictions if they exist
+    if all_baseline_predictions:
+        for name, preds in ensemble.baseline_predictions.items():
+            all_baseline_predictions[name].extend(preds)
     
     # Then evaluate non-cancer protocols (negative class)
     logger.info("\nEvaluating non-cancer protocols...")
@@ -402,8 +404,10 @@ def main():
     all_labels.extend([0] * non_cancer_count)
     for name, preds in non_cancer_predictions.items():
         all_predictions[name].extend(preds)
-    for name, preds in ensemble.baseline_predictions.items():
-        all_baseline_predictions[name].extend(preds)
+    # Only process baseline predictions if they exist
+    if all_baseline_predictions:
+        for name, preds in ensemble.baseline_predictions.items():
+            all_baseline_predictions[name].extend(preds)
 
     # Calculate and display combined metrics for all models
     logger.info("\nDetailed Results by Model:")
