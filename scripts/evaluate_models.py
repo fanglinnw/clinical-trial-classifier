@@ -12,11 +12,12 @@ from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 import pandas as pd
 from datetime import datetime
-from utils.text_extractor import get_extractor
 
+# Add the root directory to Python path
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(root_dir)
 
+from utils.text_extractor import get_extractor
 from models.bert_classifier import BERTClassifier
 from models.baseline_classifiers import BaselineClassifiers
 
