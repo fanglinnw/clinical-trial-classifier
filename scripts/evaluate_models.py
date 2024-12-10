@@ -12,11 +12,12 @@ from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 import pandas as pd
 from datetime import datetime
-from utils.text_extractor import get_extractor
 
+# Add the root directory to Python path
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(root_dir)
 
+from utils.text_extractor import get_extractor
 from models.bert_classifier import BERTClassifier
 from models.baseline_classifiers import BaselineClassifiers
 
@@ -31,7 +32,7 @@ class ProtocolClassifierEnsemble:
         Args:
             trained_models_dir: Directory containing trained models
             max_length: Maximum length of input text
-            extractor_type: Type of text extractor to use ('simple' or 'section')
+            extractor_type: Type of text extractor to use ('simple' or 'sections')
         """
         self.logger = logging.getLogger(__name__)
         self.classifiers = {}
@@ -317,8 +318,8 @@ def main():
                         help='Directory containing trained models')
     parser.add_argument('--max-length', type=int, default=8000,
                         help='Maximum text length to process')
-    parser.add_argument('--extractor-type', type=str, choices=['simple', 'section'],
-                        default='simple', help='Type of text extractor to use')
+    parser.add_argument('--extractor-type', type=str, choices=['simple', 'sections'],
+                        default='simple', help='Type of text extractor to use (default: simple)')
     parser.add_argument('--model', choices=['biobert', 'clinicalbert', 'pubmedbert', 'baseline'],
                         help='Specify a single model to evaluate. If not provided, all models will be evaluated.')
     parser.add_argument('--output-dir', default=None,
