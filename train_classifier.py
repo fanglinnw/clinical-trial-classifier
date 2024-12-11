@@ -56,23 +56,12 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name,
-        num_labels=2
+        num_labels=2,
+        problem_type="single_label_classification"
     )
-    model = model.to(device)
-
+    
     # Load and split dataset
     texts, labels, _ = load_dataset('protocol_documents', debug=args.debug, debug_samples=args.debug_samples)
-    
-    # Calculate class weights based on dataset distribution
-    unique_labels, label_counts = np.unique(labels, return_counts=True)
-    # The weight for each class will be inversely proportional to its frequency
-    # More samples = lower weight, fewer samples = higher weight
-    weights = 1. / label_counts
-    # Normalize weights so they sum to number of classes (2)
-    class_weights = torch.tensor(weights * (len(unique_labels) / weights.sum()), dtype=torch.float)
-    print(f"Class distribution: {label_counts}")
-    print(f"Calculated weights: {class_weights}")
-    class_weights = class_weights.to(device)
     
     train_texts, val_texts, train_labels, val_labels = train_test_split(
         texts, labels, test_size=0.2, random_state=42, stratify=labels
@@ -105,14 +94,15 @@ def main():
         early_stopping_threshold=0.01
     )
     
+    model = model.to(device)
+
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         compute_metrics=compute_metrics,
-        callbacks=[early_stopping_callback],
-        class_weight=class_weights
+        callbacks=[early_stopping_callback]
     )
 
     # Train the model
