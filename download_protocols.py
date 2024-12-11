@@ -118,10 +118,10 @@ def download_protocol(study_data, download_dir, force_download=False):
         return False
 
 
-def get_existing_nct_ids(split_dir):
+def get_existing_nct_ids(directory):
     existing_ids = set()
-    if os.path.exists(split_dir):
-        for filename in os.listdir(split_dir):
+    if os.path.exists(directory):
+        for filename in os.listdir(directory):
             if filename.endswith('_protocol.pdf'):
                 nct_id = filename.split('_')[0]
                 existing_ids.add(nct_id)
@@ -180,6 +180,70 @@ def process_studies(api, study_type, target_size, base_dir, force_download=False
     else:
         tqdm.write("No additional studies needed")
         return 0
+
+
+def shuffle_protocols(train_dir, test_dir):
+    """
+    Randomly shuffle protocols between training and test sets to prevent bias from API response order.
+    Maintains the same number of protocols in each set.
+    """
+    for study_type in ['cancer', 'non_cancer']:
+        train_study_dir = os.path.join(train_dir, study_type)
+        test_study_dir = os.path.join(test_dir, study_type)
+        
+        if not (os.path.exists(train_study_dir) and os.path.exists(test_study_dir)):
+            continue
+            
+        # Get all protocols from both directories
+        train_protocols = [f for f in os.listdir(train_study_dir) if f.endswith('_protocol.pdf')]
+        test_protocols = [f for f in os.listdir(test_study_dir) if f.endswith('_protocol.pdf')]
+        
+        if not (train_protocols and test_protocols):
+            continue
+            
+        print(f"\nShuffling {study_type} protocols:")
+        print(f"- Training: {len(train_protocols)} protocols")
+        print(f"- Test: {len(test_protocols)} protocols")
+        
+        # Combine all protocols
+        all_protocols = train_protocols + test_protocols
+        random.shuffle(all_protocols)
+        
+        # Split back into train and test maintaining original sizes
+        train_size = len(train_protocols)
+        new_train = all_protocols[:train_size]
+        new_test = all_protocols[train_size:]
+        
+        # Move files to temporary directory to handle potential naming conflicts
+        temp_dir = os.path.join(os.path.dirname(train_dir), f"temp_{study_type}")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # Move all files to temp directory
+        for protocol in train_protocols:
+            src = os.path.join(train_study_dir, protocol)
+            dst = os.path.join(temp_dir, protocol)
+            os.rename(src, dst)
+            
+        for protocol in test_protocols:
+            src = os.path.join(test_study_dir, protocol)
+            dst = os.path.join(temp_dir, protocol)
+            os.rename(src, dst)
+        
+        # Move files back to their new locations
+        for protocol in new_train:
+            src = os.path.join(temp_dir, protocol)
+            dst = os.path.join(train_study_dir, protocol)
+            os.rename(src, dst)
+            
+        for protocol in new_test:
+            src = os.path.join(temp_dir, protocol)
+            dst = os.path.join(test_study_dir, protocol)
+            os.rename(src, dst)
+        
+        # Remove temporary directory
+        os.rmdir(temp_dir)
+        
+        print(f"✓ Shuffled {len(all_protocols)} {study_type} protocols")
 
 
 def main():
@@ -257,6 +321,10 @@ def main():
                     print(f"\nNewly downloaded {study_type} test protocols: {test_success_count}")
                     # Update existing_nct_ids with newly downloaded test protocols
                     existing_nct_ids.update(get_existing_nct_ids(os.path.join(test_dir, study_type)))
+            
+            # Shuffle protocols between train and test sets
+            print("\nShuffling protocols between training and test sets...")
+            shuffle_protocols(base_dir, test_dir)
 
         # Print final statistics
         print("\nFinal dataset statistics:")
