@@ -1,6 +1,6 @@
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from transformers import Trainer, TrainingArguments
+from transformers import Trainer, TrainingArguments, EarlyStoppingCallback
 import os
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
@@ -26,8 +26,8 @@ def main():
                       help='Run in debug mode with smaller dataset and fewer epochs')
     parser.add_argument('--debug-samples', type=int, default=5,
                       help='Number of samples per class to use in debug mode')
-    parser.add_argument('--epochs', type=int, default=3,
-                      help='Number of training epochs')
+    parser.add_argument('--epochs', type=int, default=5,
+                      help='Number of training epochs (default: 5)')
     parser.add_argument('--output-dir', type=str, default='./final_model',
                       help='Directory to save the final model')
     args = parser.parse_args()
@@ -81,19 +81,26 @@ def main():
         save_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model="f1",
+        greater_is_better=True,  # Since we're optimizing for F1
         # Enable mixed precision training for NVIDIA GPUs
         fp16=device.type == 'cuda',
         # Use 32-bit precision for M1 GPU (more stable)
         fp16_full_eval=False
     )
 
-    # Initialize trainer
+    # Initialize trainer with early stopping
+    early_stopping_callback = EarlyStoppingCallback(
+        early_stopping_patience=2,  # Stop if no improvement for 2 epochs
+        early_stopping_threshold=0.01  # Minimum change to qualify as an improvement
+    )
+    
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         compute_metrics=compute_metrics,
+        callbacks=[early_stopping_callback]
     )
 
     # Train the model
