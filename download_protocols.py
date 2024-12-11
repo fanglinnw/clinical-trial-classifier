@@ -66,7 +66,7 @@ def get_nct_id(study_data):
 def download_protocol(study_data, download_dir, force_download=False):
     nct_id = get_nct_id(study_data)
     if not nct_id:
-        print("Invalid or missing NCT ID")
+        tqdm.write(f"Invalid or missing NCT ID")
         return False
 
     try:
@@ -86,22 +86,35 @@ def download_protocol(study_data, download_dir, force_download=False):
         full_path = os.path.join(download_dir, save_filename)
 
         if os.path.exists(full_path) and not force_download:
-            print(f"Skipping {nct_id} - file already exists")
+            tqdm.write(f"Skipping {nct_id} - file already exists")
             return True
 
-        response = requests.get(url)
+        response = requests.get(url, stream=True)
         response.raise_for_status()
-
-        with open(full_path, 'wb') as f:
-            f.write(response.content)
-        print(f"Successfully downloaded {nct_id}")
+        
+        # Get total file size for progress bar
+        total_size = int(response.headers.get('content-length', 0))
+        
+        with open(full_path, 'wb') as f, tqdm(
+            desc=f"Downloading {nct_id}",
+            total=total_size,
+            unit='iB',
+            unit_scale=True,
+            unit_divisor=1024,
+            leave=False
+        ) as pbar:
+            for data in response.iter_content(chunk_size=1024):
+                size = f.write(data)
+                pbar.update(size)
+                
+        tqdm.write(f"Successfully downloaded {nct_id}")
         return True
 
     except requests.exceptions.RequestException as e:
-        print(f"Error downloading {nct_id}: {str(e)}")
+        tqdm.write(f"Error downloading {nct_id}: {str(e)}")
         return False
     except Exception as e:
-        print(f"An unexpected error occurred while downloading {nct_id}: {str(e)}")
+        tqdm.write(f"An unexpected error occurred while downloading {nct_id}: {str(e)}")
         return False
 
 
@@ -147,16 +160,16 @@ def process_studies(api, study_type, target_size, base_dir, split_ratios=(0.7, 0
     existing_ids = {split: get_existing_nct_ids(split_dirs[split]) for split in splits}
     all_existing = set().union(*existing_ids.values())
     
-    print(f"Found existing {study_type} protocols:")
+    tqdm.write(f"Found existing {study_type} protocols:")
     for split in splits:
-        print(f"- {split}: {len(existing_ids[split])} protocols")
+        tqdm.write(f"- {split}: {len(existing_ids[split])} protocols")
 
     # Calculate how many more studies we need
     total_existing = len(all_existing)
     needed_studies = max(0, target_size - total_existing)
 
     if needed_studies > 0:
-        print(f"\nNeed {needed_studies} more {study_type} studies to reach target of {target_size}")
+        tqdm.write(f"\nNeed {needed_studies} more {study_type} studies to reach target of {target_size}")
         studies = api.search_studies(needed_studies, study_type == "cancer", existing_nct_ids or all_existing)
         
         # Split new studies for train/val/test
@@ -176,14 +189,20 @@ def process_studies(api, study_type, target_size, base_dir, split_ratios=(0.7, 0
         # Download protocols for each split
         success_counts = {split: 0 for split in splits}
         for split, studies_subset in split_studies.items():
-            print(f"\nDownloading {len(studies_subset)} protocols for {split} split...")
-            for study in tqdm(studies_subset):
-                if download_protocol(study, split_dirs[split], force_download):
-                    success_counts[split] += 1
+            tqdm.write(f"\nDownloading {len(studies_subset)} protocols for {split} split...")
+            with tqdm(
+                studies_subset,
+                desc=f"Processing {split} split",
+                unit="protocol"
+            ) as pbar:
+                for study in pbar:
+                    if download_protocol(study, split_dirs[split], force_download):
+                        success_counts[split] += 1
+                    pbar.set_postfix({"success": success_counts[split]})
 
         return success_counts
     else:
-        print("No additional studies needed")
+        tqdm.write("No additional studies needed")
         return {split: 0 for split in splits}
 
 
