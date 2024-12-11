@@ -66,26 +66,38 @@ protocol_documents_test/     # Test data (optional)
 | `--train-size` | 750 | Number of protocols to download per category for training |
 | `--test-size` | 100 | Number of protocols to download per category for testing |
 | `--no-test` | False | Skip downloading test set |
+| `--train-dir` | protocol_documents | Directory for training dataset |
+| `--test-dir` | protocol_documents_test | Directory for test dataset |
 | `--force-download` | False | Force re-download of existing files |
 | `--exclude-dirs` | [] | Additional directories to check for existing NCT IDs |
+
+### Verify Dataset (`verify_dataset.py`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--train-dir` | protocol_documents | Directory containing training data |
+| `--test-dir` | protocol_documents_test | Directory containing test data |
+| `--output-file` | dataset_verification_report.txt | Output file for verification report |
 
 ### Train Model (`train_classifier.py`)
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--debug` | False | Run in debug mode with smaller dataset |
+| `--train-dir` | protocol_documents | Directory containing training data |
+| `--model-dir` | ./final_model | Directory to save trained model |
+| `--debug` | False | Run in debug mode |
 | `--debug-samples` | 5 | Number of samples per class in debug mode |
-| `--epochs` | 3 | Number of training epochs |
-| `--output-dir` | ./final_model | Directory to save trained model |
+| `--epochs` | 5 | Number of training epochs |
+| `--learning-rate` | 1e-5 | Learning rate for training |
 
 ### Evaluate Model (`evaluate_model.py`)
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--model-dir` | ./final_model | Directory containing trained model |
 | `--test-dir` | protocol_documents_test | Directory containing test data |
-| `--batch-size` | 8 | Batch size for evaluation |
+| `--model-dir` | ./final_model | Directory containing trained model |
 | `--output-dir` | evaluation_results | Directory to save results |
+| `--batch-size` | 8 | Batch size for evaluation |
 | `--debug` | False | Run in debug mode |
 | `--debug-samples` | 5 | Number of samples per class in debug mode |
 

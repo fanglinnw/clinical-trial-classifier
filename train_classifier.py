@@ -23,14 +23,16 @@ def compute_metrics(pred):
 
 def main():
     parser = argparse.ArgumentParser(description='Train a PubMedBERT model for protocol classification')
+    parser.add_argument('--train-dir', type=str, default='protocol_documents',
+                      help='Directory containing training data (default: protocol_documents)')
+    parser.add_argument('--model-dir', type=str, default='./final_model',
+                      help='Directory to save the trained model (default: ./final_model)')
     parser.add_argument('--debug', action='store_true',
-                      help='Run in debug mode with smaller dataset and fewer epochs')
+                      help='Run in debug mode with smaller dataset')
     parser.add_argument('--debug-samples', type=int, default=5,
                       help='Number of samples per class to use in debug mode')
     parser.add_argument('--epochs', type=int, default=5,
                       help='Number of training epochs (default: 5)')
-    parser.add_argument('--output-dir', type=str, default='./final_model',
-                      help='Directory to save the final model')
     parser.add_argument('--learning-rate', type=float, default=1e-5,
                       help='Learning rate for training')
     args = parser.parse_args()
@@ -61,7 +63,7 @@ def main():
     )
     
     # Load and split dataset
-    texts, labels, _ = load_dataset('protocol_documents', debug=args.debug, debug_samples=args.debug_samples)
+    texts, labels, _ = load_dataset(args.train_dir, debug=args.debug, debug_samples=args.debug_samples)
     
     train_texts, val_texts, train_labels, val_labels = train_test_split(
         texts, labels, test_size=0.2, random_state=42, stratify=labels
@@ -109,9 +111,9 @@ def main():
     trainer.train()
 
     # Save the final model
-    trainer.save_model(args.output_dir)
-    tokenizer.save_pretrained(args.output_dir)
-    print(f"\nModel saved to {args.output_dir}/")
+    trainer.save_model(args.model_dir)
+    tokenizer.save_pretrained(args.model_dir)
+    print(f"\nModel saved to {args.model_dir}/")
 
 if __name__ == "__main__":
     main()

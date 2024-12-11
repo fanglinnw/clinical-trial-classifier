@@ -74,14 +74,14 @@ def plot_confusion_matrix(cm, save_path):
 
 def main():
     parser = argparse.ArgumentParser(description='Evaluate trained model on test set')
-    parser.add_argument('--model-dir', type=str, default='./final_model',
-                      help='Directory containing the trained model')
     parser.add_argument('--test-dir', type=str, default='protocol_documents_test',
-                      help='Directory containing test data')
-    parser.add_argument('--batch-size', type=int, default=8,
-                      help='Batch size for evaluation')
+                      help='Directory containing test data (default: protocol_documents_test)')
+    parser.add_argument('--model-dir', type=str, default='./final_model',
+                      help='Directory containing the trained model (default: ./final_model)')
     parser.add_argument('--output-dir', type=str, default='evaluation_results',
-                      help='Directory to save evaluation results')
+                      help='Directory to save evaluation results (default: evaluation_results)')
+    parser.add_argument('--batch-size', type=int, default=8,
+                      help='Batch size for evaluation (default: 8)')
     parser.add_argument('--debug', action='store_true',
                       help='Run in debug mode with smaller dataset')
     parser.add_argument('--debug-samples', type=int, default=5,
