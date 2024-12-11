@@ -136,11 +136,7 @@ def get_all_existing_nct_ids(directories):
             for study_type in ['cancer', 'non_cancer']:
                 type_dir = os.path.join(directory, study_type)
                 if os.path.exists(type_dir):
-                    # Check both split directories (train/val/test) and flat directories
-                    for split in ['train', 'val', 'test', '']:
-                        split_dir = os.path.join(type_dir, split)
-                        if os.path.exists(split_dir):
-                            all_nct_ids.update(get_existing_nct_ids(split_dir))
+                    all_nct_ids.update(get_existing_nct_ids(type_dir))
     return all_nct_ids
 
 
@@ -150,16 +146,22 @@ def process_studies(api, study_type, target_size, base_dir, force_download=False
     study_dir = os.path.join(base_dir, study_type)
     os.makedirs(study_dir, exist_ok=True)
 
-    # Get existing NCT IDs
-    existing_ids = get_existing_nct_ids(study_dir)
-    tqdm.write(f"Found {len(existing_ids)} existing {study_type} protocols")
+    # Get existing NCT IDs from this directory
+    current_dir_ids = get_existing_nct_ids(study_dir)
+    tqdm.write(f"Found {len(current_dir_ids)} existing {study_type} protocols in {study_dir}")
+    
+    # Combine with other existing IDs
+    all_existing_ids = set(existing_nct_ids or set()) | current_dir_ids
+    if existing_nct_ids:
+        tqdm.write(f"Total {len(existing_nct_ids)} NCT IDs found across all directories")
 
     # Calculate how many more studies we need
-    needed_studies = max(0, target_size - len(existing_ids))
+    needed_studies = max(0, target_size - len(current_dir_ids))
 
     if needed_studies > 0:
         tqdm.write(f"\nNeed {needed_studies} more {study_type} studies to reach target of {target_size}")
-        studies = api.search_studies(needed_studies, study_type == "cancer", existing_nct_ids or existing_ids)
+        # Pass all_existing_ids to prevent duplicates across all directories
+        studies = api.search_studies(needed_studies, study_type == "cancer", all_existing_ids)
         
         # Download protocols
         success_count = 0
@@ -190,27 +192,32 @@ def main():
                       help='Skip downloading test set')
     parser.add_argument('--force-download', action='store_true',
                       help='Force re-download of existing files')
-    parser.add_argument('--output-dir', type=str, default="protocol_documents",
-                      help='Output directory for protocol documents (default: protocol_documents)')
+    parser.add_argument('--train-dir', type=str, default="protocol_documents",
+                      help='Output directory for training data (default: protocol_documents)')
     parser.add_argument('--test-dir', type=str, default="protocol_documents_test",
-                      help='Output directory for test protocols (default: protocol_documents_test)')
+                      help='Output directory for test data (default: protocol_documents_test)')
     parser.add_argument('--exclude-dirs', nargs='+', default=[],
                       help='Additional directories to check for existing NCT IDs to exclude')
     args = parser.parse_args()
 
-    base_dir = args.output_dir
+    base_dir = args.train_dir
     test_dir = args.test_dir if not args.no_test else None
+    
+    # Create directories
     os.makedirs(base_dir, exist_ok=True)
     if test_dir:
         os.makedirs(test_dir, exist_ok=True)
+    
     api = ClinicalTrialsAPI()
 
-    # Get all existing NCT IDs to exclude
-    exclude_dirs = ["protocol_documents", "protocol_documents_test"] + args.exclude_dirs
-    if args.output_dir not in exclude_dirs:
-        exclude_dirs.append(args.output_dir)
+    # Get all existing NCT IDs to exclude from both train and test directories
+    exclude_dirs = args.exclude_dirs.copy()
+    if args.train_dir not in exclude_dirs:
+        exclude_dirs.append(args.train_dir)
     if test_dir and test_dir not in exclude_dirs:
         exclude_dirs.append(test_dir)
+    
+    print("\nGathering existing NCT IDs...")
     existing_nct_ids = get_all_existing_nct_ids(exclude_dirs)
     if existing_nct_ids:
         print(f"Found {len(existing_nct_ids)} existing NCT IDs to exclude")
@@ -220,22 +227,24 @@ def main():
         total_downloads = 0
         total_test_downloads = 0
         
+        # First download training data
         for study_type in ['cancer', 'non_cancer']:
-            print(f"\nProcessing {study_type} studies (target: {args.train_size})...")
-            
-            # Download main dataset
+            print(f"\nProcessing {study_type} training studies (target: {args.train_size})...")
             success_count = process_studies(
                 api, study_type, args.train_size, base_dir, 
                 force_download=args.force_download,
                 existing_nct_ids=existing_nct_ids
             )
             total_downloads += success_count
-
+            
             if success_count > 0:
                 print(f"\nNewly downloaded {study_type} protocols: {success_count}")
-            
-            # Download test dataset if requested
-            if test_dir:
+                # Update existing_nct_ids with newly downloaded protocols
+                existing_nct_ids.update(get_existing_nct_ids(os.path.join(base_dir, study_type)))
+        
+        # Then download test data
+        if test_dir:
+            for study_type in ['cancer', 'non_cancer']:
                 print(f"\nProcessing {study_type} test studies (target: {args.test_size})...")
                 test_success_count = process_studies(
                     api, study_type, args.test_size, test_dir,
@@ -246,26 +255,36 @@ def main():
                 
                 if test_success_count > 0:
                     print(f"\nNewly downloaded {study_type} test protocols: {test_success_count}")
+                    # Update existing_nct_ids with newly downloaded test protocols
+                    existing_nct_ids.update(get_existing_nct_ids(os.path.join(test_dir, study_type)))
 
         # Print final statistics
         print("\nFinal dataset statistics:")
-        print("\nMain dataset:")
+        print("\nTraining dataset:")
         for study_type in ['cancer', 'non_cancer']:
             study_dir = os.path.join(base_dir, study_type)
-            count = len(get_existing_nct_ids(study_dir)) if os.path.exists(study_dir) else 0
-            print(f"{study_type.title()}: {count} protocols")
+            if os.path.exists(study_dir):
+                count = len(os.listdir(study_dir))
+                print(f"- {study_type}: {count} protocols")
         
         if test_dir:
             print("\nTest dataset:")
             for study_type in ['cancer', 'non_cancer']:
                 study_dir = os.path.join(test_dir, study_type)
-                count = len(get_existing_nct_ids(study_dir)) if os.path.exists(study_dir) else 0
-                print(f"{study_type.title()}: {count} protocols")
+                if os.path.exists(study_dir):
+                    count = len(os.listdir(study_dir))
+                    print(f"- {study_type}: {count} protocols")
         
-        print(f"\nTotal new downloads: {total_downloads} (main) + {total_test_downloads} (test)")
+        if total_downloads > 0 or total_test_downloads > 0:
+            print(f"\nTotal new downloads:")
+            print(f"- Training: {total_downloads}")
+            if test_dir:
+                print(f"- Test: {total_test_downloads}")
 
+    except KeyboardInterrupt:
+        print("\nDownload interrupted by user")
     except Exception as e:
-        print(f"An error occurred: {str(e)}")
+        print(f"\nAn error occurred: {str(e)}")
 
 
 if __name__ == "__main__":
