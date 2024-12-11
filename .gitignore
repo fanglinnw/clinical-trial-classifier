@@ -54,6 +54,7 @@ final_model/
 
 # Evaluation Results
 evaluation_results/
+results/
 llm_results/
 *.csv
 confusion_matrix.png

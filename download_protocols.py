@@ -182,8 +182,8 @@ def process_studies(api, study_type, target_size, base_dir, force_download=False
 
 def main():
     parser = argparse.ArgumentParser(description='Download ClinicalTrials.gov protocol documents')
-    parser.add_argument('--target-size', type=int, default=1500,
-                      help='Target number of protocols per type (cancer/non-cancer) (default: 1500)')
+    parser.add_argument('--target-size', type=int, default=750,
+                      help='Target number of protocols per type (cancer/non-cancer) (default: 750)')
     parser.add_argument('--test-size', type=int, default=None,
                       help='If specified, download this many protocols for each type into a separate test directory')
     parser.add_argument('--force-download', action='store_true',

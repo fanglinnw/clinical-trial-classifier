@@ -6,11 +6,11 @@ A deep learning system that uses PubMedBERT to classify clinical trial protocols
 
 ### 1. Download Protocol Documents
 ```bash
-# Download a small set of protocols for testing
-python download_protocols.py --target-size 100 --output-dir protocol_documents
+# Download the recommended dataset size (750 protocols per category)
+python download_protocols.py --target-size 750
 
-# Optional: Download separate test set
-python download_protocols.py --test-size 20 --test-dir protocol_documents_test
+# For a smaller dataset during development
+python download_protocols.py --target-size 100 --output-dir protocol_documents_dev
 ```
 
 ### 2. Train Model
@@ -89,6 +89,36 @@ Debug mode features:
 - Runs fewer epochs during training (2 instead of 3)
 - More frequent logging
 - Faster iteration for testing changes
+
+## 🔬 Advanced Features
+
+### Label Verification (`verify_labels.py`)
+Verify and validate the dataset labels using a rule-based classifier:
+```bash
+python verify_labels.py --protocol-dir protocol_documents
+```
+
+The verification process:
+- Uses cancer-specific keywords and patterns
+- Identifies cancer-related treatments and procedures
+- Generates a detailed verification report
+
+### Learning Curve Analysis (`learning_curve_analysis.py`)
+Analyze model performance with varying training dataset sizes:
+```bash
+python learning_curve_analysis.py
+```
+
+Features:
+- Trains models with different subset sizes
+- Plots learning curves for accuracy and loss
+- Helps determine optimal dataset size
+
+### Dataset Balancing (`balance_datasets.py`)
+Balance the dataset between cancer and non-cancer protocols:
+```bash
+python balance_datasets.py
+```
 
 ## 💻 Hardware Support
 
