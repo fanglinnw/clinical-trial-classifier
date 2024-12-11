@@ -360,8 +360,8 @@ def plot_learning_curves(results, output_dir):
 if __name__ == "__main__":
     DATA_DIR = "protocol_documents"
     OUTPUT_DIR = "learning_curves_output"
-    MAX_TOTAL_SAMPLES = 8000
-    NUM_POINTS = 6
+    MAX_TOTAL_SAMPLES = 20000
+    NUM_POINTS = 10 
     
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
