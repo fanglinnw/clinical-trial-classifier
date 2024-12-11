@@ -71,5 +71,5 @@ def shuffle_dataset(base_dir, splits=('train', 'val', 'test')):
 
 if __name__ == "__main__":
     # Example usage
-    dataset_path = "./protocol_documents"  # Replace with your dataset path
+    dataset_path = "/home/arklin/work/code/clinical-trial-classifier/protocol_documents" 
     shuffle_dataset(dataset_path)

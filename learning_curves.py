@@ -7,14 +7,20 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 import pandas as pd
 from datetime import datetime
 import logging
-from tqdm import tqdm
 import random
+import json
 import pypdf
+from tqdm import tqdm
+from pathlib import Path
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def get_device_settings():
     """Determine device type and optimal settings"""
     if torch.cuda.is_available():  # NVIDIA GPU
-        gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3  # Convert to GB
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
         return {
             'device_type': 'cuda',
             'batch_size': 8 if gpu_memory >= 16 else 4,
@@ -24,8 +30,8 @@ def get_device_settings():
     elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():  # Apple Silicon
         return {
             'device_type': 'mps',
-            'batch_size': 4,  # M3 Max can handle this well
-            'mixed_precision': 'no',  # MPS doesn't support mixed precision training yet
+            'batch_size': 4,
+            'mixed_precision': 'no',
             'gradient_accumulation_steps': 8
         }
     else:  # CPU
@@ -36,84 +42,132 @@ def get_device_settings():
             'gradient_accumulation_steps': 16
         }
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-class RobustProtocolDataset(torch.utils.data.Dataset):
-    def __init__(self, root_dir, split, max_samples=None):
-        """
-        Args:
-            root_dir: Root directory containing cancer/non_cancer subdirs
-            split: One of 'train', 'val', or 'test'
-            max_samples: Maximum number of samples to use per class
-        """
-        self.tokenizer = AutoTokenizer.from_pretrained('microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext')
-        self.max_length = 512
+class ProtocolDataManager:
+    """Handles one-time validation and caching of protocol documents"""
+    
+    def __init__(self, root_dir, cache_dir="protocol_cache"):
+        self.root_dir = root_dir
+        self.cache_dir = cache_dir
+        self.cache_file = os.path.join(cache_dir, "validated_protocols.json")
+        self.target_chars = 4000
         
-        # Get file paths and labels
-        cancer_dir = os.path.join(root_dir, 'cancer', split)
-        non_cancer_dir = os.path.join(root_dir, 'non_cancer', split)
+        os.makedirs(cache_dir, exist_ok=True)
+        self.logger = logging.getLogger(__name__)
         
-        # Validate and filter files
-        cancer_files = self._validate_files(cancer_dir, label=1, max_samples=max_samples)
-        non_cancer_files = self._validate_files(non_cancer_dir, label=0, max_samples=max_samples)
-        
-        self.samples = cancer_files + non_cancer_files
-        if not self.samples:
-            raise ValueError(f"No valid files found in {split} split")
+    def validate_and_cache_data(self, force_revalidation=False):
+        """Validate all PDFs once and cache the results"""
+        if not force_revalidation and os.path.exists(self.cache_file):
+            self.logger.info("Using existing cached data")
+            return self.load_cache()
             
-        random.shuffle(self.samples)
-        logger.info(f"Loaded {len(self.samples)} valid files for {split} split")
+        self.logger.info("Starting validation of all PDF files...")
         
-    def _validate_files(self, directory, label, max_samples=None):
-        """Validate and filter PDF files, checking each one can be read"""
-        valid_files = []
-        all_files = [f for f in os.listdir(directory) if f.endswith('.pdf')]
+        validated_data = {split: {'cancer': [], 'non_cancer': []} 
+                         for split in ['train', 'val', 'test']}
         
-        for file in tqdm(all_files, desc=f"Validating files in {os.path.basename(directory)}"):
-            try:
-                pdf_path = os.path.join(directory, file)
-                text = self._extract_text_from_pdf(pdf_path)
-                if text.strip():  # Check if text is non-empty after stripping whitespace
-                    valid_files.append((file, label, text))  # Store the extracted text
-                else:
-                    logger.warning(f"Empty text in file: {file}")
-            except Exception as e:
-                logger.warning(f"Error processing {file}: {str(e)}")
+        for split in ['train', 'val', 'test']:
+            for category in ['cancer', 'non_cancer']:
+                directory = os.path.join(self.root_dir, category, split)
+                if not os.path.exists(directory):
+                    continue
+                    
+                label = 1 if category == 'cancer' else 0
+                
+                files = [f for f in os.listdir(directory) if f.endswith('.pdf')]
+                for file in tqdm(files, desc=f"Validating {split}/{category}"):
+                    try:
+                        pdf_path = os.path.join(directory, file)
+                        text = self._extract_text_from_pdf(pdf_path)
+                        
+                        if text.strip():
+                            validated_data[split][category].append({
+                                'filename': file,
+                                'text': text,
+                                'label': label
+                            })
+                        else:
+                            self.logger.warning(f"Empty text in file: {file}")
+                            
+                    except Exception as e:
+                        self.logger.warning(f"Error processing {file}: {str(e)}")
         
-        if max_samples:
-            valid_files = valid_files[:max_samples]
-            
-        return valid_files
-
+        self._save_cache(validated_data)
+        return validated_data
+    
     def _extract_text_from_pdf(self, pdf_path):
-        """Extract text from PDF file with better error handling"""
+        """Extract text from PDF file with target character limit"""
         text = ""
         try:
             pdf_reader = pypdf.PdfReader(pdf_path)
+            
             for page in pdf_reader.pages:
                 try:
                     page_text = page.extract_text()
                     if page_text:
                         text += page_text + " "
+                        if len(text) >= self.target_chars:
+                            text = text[:self.target_chars]
+                            break
                 except Exception as e:
-                    logger.warning(f"Error extracting text from page in {pdf_path}: {str(e)}")
+                    self.logger.warning(f"Error extracting page text: {str(e)}")
+                    continue
+                    
         except Exception as e:
-            logger.warning(f"Error reading PDF {pdf_path}: {str(e)}")
-            raise  # Re-raise to be caught by _validate_files
+            self.logger.error(f"Error reading PDF {pdf_path}: {str(e)}")
+            raise
             
         return text.strip()
+    
+    def _save_cache(self, data):
+        """Save validated data to cache file"""
+        try:
+            with open(self.cache_file, 'w') as f:
+                json.dump(data, f)
+            self.logger.info(f"Cache saved to {self.cache_file}")
+        except Exception as e:
+            self.logger.error(f"Error saving cache: {str(e)}")
+    
+    def load_cache(self):
+        """Load validated data from cache file"""
+        try:
+            with open(self.cache_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            self.logger.error(f"Error loading cache: {str(e)}")
+            return None
 
+class OptimizedProtocolDataset(torch.utils.data.Dataset):
+    """Dataset class that uses pre-validated and cached data"""
+    
+    def __init__(self, validated_data, split, tokenizer, max_samples=None):
+        self.tokenizer = tokenizer
+        self.max_length = 512
+        
+        # Combine cancer and non_cancer samples
+        samples = (validated_data[split]['cancer'] + 
+                  validated_data[split]['non_cancer'])
+        
+        # Shuffle and limit samples if specified
+        random.shuffle(samples)
+        if max_samples:
+            # Ensure balanced classes when limiting samples
+            cancer_samples = [s for s in samples if s['label'] == 1][:max_samples//2]
+            non_cancer_samples = [s for s in samples if s['label'] == 0][:max_samples//2]
+            samples = cancer_samples + non_cancer_samples
+            random.shuffle(samples)
+            
+        self.samples = samples
+        self.logger = logging.getLogger(__name__)
+        self.logger.info(f"Created {split} dataset with {len(samples)} samples")
+    
     def __len__(self):
         return len(self.samples)
-
+    
     def __getitem__(self, idx):
-        filename, label, text = self.samples[idx]  # Use pre-extracted text
+        sample = self.samples[idx]
         
-        # Tokenize text
         encoding = self.tokenizer(
-            text,
+            sample['text'],
             max_length=self.max_length,
             padding='max_length',
             truncation=True,
@@ -123,13 +177,36 @@ class RobustProtocolDataset(torch.utils.data.Dataset):
         return {
             'input_ids': encoding['input_ids'].squeeze(),
             'attention_mask': encoding['attention_mask'].squeeze(),
-            'labels': torch.tensor(label, dtype=torch.long)
+            'labels': torch.tensor(sample['label'], dtype=torch.long)
         }
 
+def compute_metrics(pred):
+    """Compute metrics for evaluation"""
+    labels = pred.label_ids
+    preds = pred.predictions.argmax(-1)
+    precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='binary')
+    acc = accuracy_score(labels, preds)
+    return {
+        'accuracy': acc,
+        'precision': precision,
+        'recall': recall,
+        'f1': f1
+    }
+
 def analyze_learning_curves(data_dir, output_dir, max_total_samples, num_points=6):
-    """
-    Analyze learning curves with robust error handling
-    """
+    """Analyze learning curves with improved data handling"""
+    
+    # Initialize tokenizer
+    tokenizer = AutoTokenizer.from_pretrained('microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext')
+    
+    # Initialize data manager and validate files once
+    data_manager = ProtocolDataManager(data_dir)
+    validated_data = data_manager.validate_and_cache_data()
+    
+    if not validated_data:
+        logger.error("Failed to load or validate data")
+        return None
+    
     # Create sample sizes to test (exponential scale)
     sample_sizes = np.geomspace(100, max_total_samples//2, num_points, dtype=int)
     
@@ -139,27 +216,23 @@ def analyze_learning_curves(data_dir, output_dir, max_total_samples, num_points=
         'val_f1': [],
         'test_f1': [],
         'train_time': [],
-        'valid_samples': []  # Track number of valid samples
+        'valid_samples': []
     }
     
     # Get device settings
     device_settings = get_device_settings()
     
     # Create test dataset once
-    try:
-        test_dataset = RobustProtocolDataset(data_dir, 'test', max_total_samples//10)
-        logger.info(f"Created test dataset with {len(test_dataset)} samples")
-    except Exception as e:
-        logger.error(f"Error creating test dataset: {str(e)}")
-        return None
+    test_dataset = OptimizedProtocolDataset(validated_data, 'test', tokenizer)
+    logger.info(f"Created test dataset with {len(test_dataset)} samples")
     
     for samples_per_class in sample_sizes:
         logger.info(f"\nTraining with {samples_per_class*2} total samples ({samples_per_class} per class)")
         
         try:
-            # Create datasets
-            train_dataset = RobustProtocolDataset(data_dir, 'train', samples_per_class)
-            val_dataset = RobustProtocolDataset(data_dir, 'val', samples_per_class//5)
+            # Create datasets using cached data
+            train_dataset = OptimizedProtocolDataset(validated_data, 'train', tokenizer, samples_per_class*2)
+            val_dataset = OptimizedProtocolDataset(validated_data, 'val', tokenizer, samples_per_class//2)
             
             # Initialize model
             model = AutoModelForSequenceClassification.from_pretrained(
@@ -258,7 +331,7 @@ def plot_learning_curves(results, output_dir):
     max_test_f1_idx = results['test_f1'].index(max_test_f1)
     optimal_size = results['train_size'][max_test_f1_idx]
     
-    # Find point of diminishing returns (where improvement rate drops below threshold)
+    # Find point of diminishing returns
     improvements = np.diff(results['test_f1'])
     improvement_rates = improvements / np.array(results['test_f1'][:-1])
     threshold = 0.01  # 1% improvement threshold
