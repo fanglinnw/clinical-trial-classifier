@@ -128,14 +128,14 @@ def main():
     print(f"\nDetailed predictions saved to: {csv_path}")
     
     # Print summary of incorrect predictions
-    incorrect_predictions = results_df[~results_df['correct_prediction']]
+    incorrect_predictions = results_df[~results_df['correct_prediction']].copy()  # Create an explicit copy
     if len(incorrect_predictions) > 0:
         print("\nSummary of incorrect predictions:")
         print(f"Total incorrect predictions: {len(incorrect_predictions)}")
         print("\nTop 5 most confident incorrect predictions:")
         
         # Calculate the maximum confidence for each prediction
-        incorrect_predictions['max_confidence'] = incorrect_predictions.apply(
+        incorrect_predictions.loc[:, 'max_confidence'] = incorrect_predictions.apply(
             lambda x: max(x['confidence_cancer'], x['confidence_non_cancer']), axis=1
         )
         
@@ -144,6 +144,20 @@ def main():
             print(f"\nFile: {os.path.basename(row['file_path'])}")
             print(f"True label: {row['true_label']}")
             print(f"Predicted: {row['predicted_label']} (confidence: {row['max_confidence']:.2%})")
+            
+        # Add analysis of incorrect predictions
+        cancer_as_non = len(incorrect_predictions[
+            (incorrect_predictions['true_label'] == 'Cancer') & 
+            (incorrect_predictions['predicted_label'] == 'Non-Cancer')
+        ])
+        non_as_cancer = len(incorrect_predictions[
+            (incorrect_predictions['true_label'] == 'Non-Cancer') & 
+            (incorrect_predictions['predicted_label'] == 'Cancer')
+        ])
+        
+        print("\nBreakdown of incorrect predictions:")
+        print(f"Cancer protocols classified as Non-Cancer: {cancer_as_non}")
+        print(f"Non-Cancer protocols classified as Cancer: {non_as_cancer}")
     
     print(f"\nResults saved to {args.output_dir}/")
 
