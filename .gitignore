@@ -35,6 +35,7 @@ ENV/
 
 # Project specific
 protocol_documents/
+protocol_documents_test/
 protocol_documents_debug/
 logs/
 *.pdf
@@ -46,9 +47,20 @@ logs/
 
 # Trained Models
 trained_models/
+final_model/
 *.pt
 *.bin
 *.h5
 
-# Logs
+# Evaluation Results
+evaluation_results/
+results/
+llm_results/
+*.csv
+confusion_matrix.png
+classification_report.txt
+
+# Temporary files
+*.tmp
+*.bak
 *.log
