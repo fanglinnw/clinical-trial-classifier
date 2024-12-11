@@ -4,6 +4,7 @@ from transformers import Trainer, TrainingArguments, EarlyStoppingCallback
 import os
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+import numpy as np
 from utils import ProtocolDataset, load_dataset, preprocess_text, read_pdf
 import argparse
 
@@ -30,6 +31,8 @@ def main():
                       help='Number of training epochs (default: 5)')
     parser.add_argument('--output-dir', type=str, default='./final_model',
                       help='Directory to save the final model')
+    parser.add_argument('--learning-rate', type=float, default=1e-5,
+                      help='Learning rate for training')
     args = parser.parse_args()
 
     if args.debug:
@@ -59,8 +62,20 @@ def main():
 
     # Load and split dataset
     texts, labels, _ = load_dataset('protocol_documents', debug=args.debug, debug_samples=args.debug_samples)
+    
+    # Calculate class weights based on dataset distribution
+    unique_labels, label_counts = np.unique(labels, return_counts=True)
+    # The weight for each class will be inversely proportional to its frequency
+    # More samples = lower weight, fewer samples = higher weight
+    weights = 1. / label_counts
+    # Normalize weights so they sum to number of classes (2)
+    class_weights = torch.tensor(weights * (len(unique_labels) / weights.sum()), dtype=torch.float)
+    print(f"Class distribution: {label_counts}")
+    print(f"Calculated weights: {class_weights}")
+    class_weights = class_weights.to(device)
+    
     train_texts, val_texts, train_labels, val_labels = train_test_split(
-        texts, labels, test_size=0.2, random_state=42
+        texts, labels, test_size=0.2, random_state=42, stratify=labels
     )
 
     # Create datasets
@@ -71,27 +86,23 @@ def main():
     training_args = TrainingArguments(
         output_dir="./results",
         num_train_epochs=2 if args.debug else args.epochs,
-        per_device_train_batch_size=8 if device.type == 'cpu' else 16,  # Larger batch size for GPU
+        per_device_train_batch_size=8 if device.type == 'cpu' else 16,
         per_device_eval_batch_size=8 if device.type == 'cpu' else 16,
-        warmup_steps=100 if args.debug else 500,  # Fewer warmup steps in debug mode
         weight_decay=0.01,
-        logging_dir='./logs',
-        logging_steps=1 if args.debug else 10,  # More frequent logging in debug mode
+        learning_rate=args.learning_rate,
         evaluation_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model="f1",
-        greater_is_better=True,  # Since we're optimizing for F1
-        # Enable mixed precision training for NVIDIA GPUs
+        logging_dir='./logs',
+        logging_steps=1 if args.debug else 10,
         fp16=device.type == 'cuda',
-        # Use 32-bit precision for M1 GPU (more stable)
         fp16_full_eval=False
     )
 
-    # Initialize trainer with early stopping
     early_stopping_callback = EarlyStoppingCallback(
-        early_stopping_patience=2,  # Stop if no improvement for 2 epochs
-        early_stopping_threshold=0.01  # Minimum change to qualify as an improvement
+        early_stopping_patience=2,
+        early_stopping_threshold=0.01
     )
     
     trainer = Trainer(
@@ -100,7 +111,8 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         compute_metrics=compute_metrics,
-        callbacks=[early_stopping_callback]
+        callbacks=[early_stopping_callback],
+        class_weight=class_weights
     )
 
     # Train the model
