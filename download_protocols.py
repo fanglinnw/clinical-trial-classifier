@@ -144,133 +144,123 @@ def get_all_existing_nct_ids(directories):
     return all_nct_ids
 
 
-def process_studies(api, study_type, target_size, base_dir, split_ratios=(0.7, 0.15, 0.15), force_download=False, existing_nct_ids=None):
-    """Process and download studies with train/val/test split"""
-    if sum(split_ratios) != 1.0:
-        raise ValueError("Split ratios must sum to 1.0")
-    
-    # Create train/val/test splits
-    splits = ['train', 'val', 'test']
-    split_dirs = {}
-    for split in splits:
-        split_dirs[split] = os.path.join(base_dir, study_type, split)
-        os.makedirs(split_dirs[split], exist_ok=True)
+def process_studies(api, study_type, target_size, base_dir, force_download=False, existing_nct_ids=None):
+    """Process and download studies"""
+    # Create directory
+    study_dir = os.path.join(base_dir, study_type)
+    os.makedirs(study_dir, exist_ok=True)
 
     # Get existing NCT IDs
-    existing_ids = {split: get_existing_nct_ids(split_dirs[split]) for split in splits}
-    all_existing = set().union(*existing_ids.values())
-    
-    tqdm.write(f"Found existing {study_type} protocols:")
-    for split in splits:
-        tqdm.write(f"- {split}: {len(existing_ids[split])} protocols")
+    existing_ids = get_existing_nct_ids(study_dir)
+    tqdm.write(f"Found {len(existing_ids)} existing {study_type} protocols")
 
     # Calculate how many more studies we need
-    total_existing = len(all_existing)
-    needed_studies = max(0, target_size - total_existing)
+    needed_studies = max(0, target_size - len(existing_ids))
 
     if needed_studies > 0:
         tqdm.write(f"\nNeed {needed_studies} more {study_type} studies to reach target of {target_size}")
-        studies = api.search_studies(needed_studies, study_type == "cancer", existing_nct_ids or all_existing)
+        studies = api.search_studies(needed_studies, study_type == "cancer", existing_nct_ids or existing_ids)
         
-        # Split new studies for train/val/test
-        random.seed(42)
-        random.shuffle(studies)
-        
-        # Calculate split sizes for new studies
-        train_size = int(len(studies) * split_ratios[0])
-        val_size = int(len(studies) * split_ratios[1])
-        
-        split_studies = {
-            'train': studies[:train_size],
-            'val': studies[train_size:train_size + val_size],
-            'test': studies[train_size + val_size:]
-        }
+        # Download protocols
+        success_count = 0
+        tqdm.write(f"\nDownloading {len(studies)} protocols...")
+        with tqdm(
+            studies,
+            desc=f"Processing protocols",
+            unit="protocol"
+        ) as pbar:
+            for study in pbar:
+                if download_protocol(study, study_dir, force_download):
+                    success_count += 1
+                pbar.set_postfix({"success": success_count})
 
-        # Download protocols for each split
-        success_counts = {split: 0 for split in splits}
-        for split, studies_subset in split_studies.items():
-            tqdm.write(f"\nDownloading {len(studies_subset)} protocols for {split} split...")
-            with tqdm(
-                studies_subset,
-                desc=f"Processing {split} split",
-                unit="protocol"
-            ) as pbar:
-                for study in pbar:
-                    if download_protocol(study, split_dirs[split], force_download):
-                        success_counts[split] += 1
-                    pbar.set_postfix({"success": success_counts[split]})
-
-        return success_counts
+        return success_count
     else:
         tqdm.write("No additional studies needed")
-        return {split: 0 for split in splits}
+        return 0
 
 
 def main():
     parser = argparse.ArgumentParser(description='Download ClinicalTrials.gov protocol documents')
     parser.add_argument('--target-size', type=int, default=1500,
                       help='Target number of protocols per type (cancer/non-cancer) (default: 1500)')
-    parser.add_argument('--train-ratio', type=float, default=0.7,
-                      help='Ratio of studies to use for training (default: 0.7)')
-    parser.add_argument('--val-ratio', type=float, default=0.15,
-                      help='Ratio of studies to use for validation (default: 0.15)')
-    parser.add_argument('--test-ratio', type=float, default=0.15,
-                      help='Ratio of studies to use for testing (default: 0.15)')
+    parser.add_argument('--test-size', type=int, default=None,
+                      help='If specified, download this many protocols for each type into a separate test directory')
     parser.add_argument('--force-download', action='store_true',
                       help='Force re-download of existing files')
     parser.add_argument('--output-dir', type=str, default="protocol_documents",
                       help='Output directory for protocol documents (default: protocol_documents)')
+    parser.add_argument('--test-dir', type=str, default="protocol_documents_test",
+                      help='Output directory for test protocols (default: protocol_documents_test)')
     parser.add_argument('--exclude-dirs', nargs='+', default=[],
                       help='Additional directories to check for existing NCT IDs to exclude')
     args = parser.parse_args()
 
-    split_ratios = (args.train_ratio, args.val_ratio, args.test_ratio)
-    if sum(split_ratios) != 1.0:
-        raise ValueError("Split ratios must sum to 1.0")
-
     base_dir = args.output_dir
+    test_dir = args.test_dir if args.test_size else None
     os.makedirs(base_dir, exist_ok=True)
+    if test_dir:
+        os.makedirs(test_dir, exist_ok=True)
     api = ClinicalTrialsAPI()
 
     # Get all existing NCT IDs to exclude
-    exclude_dirs = ["protocol_documents"] + args.exclude_dirs
+    exclude_dirs = ["protocol_documents", "protocol_documents_test"] + args.exclude_dirs
     if args.output_dir not in exclude_dirs:
         exclude_dirs.append(args.output_dir)
+    if test_dir and test_dir not in exclude_dirs:
+        exclude_dirs.append(test_dir)
     existing_nct_ids = get_all_existing_nct_ids(exclude_dirs)
     if existing_nct_ids:
         print(f"Found {len(existing_nct_ids)} existing NCT IDs to exclude")
 
     try:
         # Process both types of studies
+        total_downloads = 0
+        total_test_downloads = 0
+        
         for study_type in ['cancer', 'non_cancer']:
             print(f"\nProcessing {study_type} studies (target: {args.target_size})...")
             
-            success_counts = process_studies(
+            # Download main dataset
+            success_count = process_studies(
                 api, study_type, args.target_size, base_dir, 
-                split_ratios=split_ratios,
                 force_download=args.force_download,
                 existing_nct_ids=existing_nct_ids
             )
+            total_downloads += success_count
 
-            if sum(success_counts.values()) > 0:
-                print(f"\nNewly downloaded {study_type} protocols:")
-                for split, count in success_counts.items():
-                    print(f"- {split}: {count} protocols")
+            if success_count > 0:
+                print(f"\nNewly downloaded {study_type} protocols: {success_count}")
+            
+            # Download test dataset if requested
+            if args.test_size:
+                print(f"\nProcessing {study_type} test studies (target: {args.test_size})...")
+                test_success_count = process_studies(
+                    api, study_type, args.test_size, test_dir,
+                    force_download=args.force_download,
+                    existing_nct_ids=existing_nct_ids
+                )
+                total_test_downloads += test_success_count
+                
+                if test_success_count > 0:
+                    print(f"\nNewly downloaded {study_type} test protocols: {test_success_count}")
 
         # Print final statistics
         print("\nFinal dataset statistics:")
+        print("\nMain dataset:")
         for study_type in ['cancer', 'non_cancer']:
-            print(f"\n{study_type.title()} protocols:")
-            total = 0
-            splits = ['train', 'val', 'test']
-            
-            for split in splits:
-                split_dir = os.path.join(base_dir, study_type, split)
-                if os.path.exists(split_dir):
-                    count = len(get_existing_nct_ids(split_dir))
-                    total += count
-                    print(f"- {split}: {count} protocols")
-            print(f"Total: {total} protocols")
+            study_dir = os.path.join(base_dir, study_type)
+            count = len(get_existing_nct_ids(study_dir)) if os.path.exists(study_dir) else 0
+            print(f"{study_type.title()}: {count} protocols")
+        
+        if test_dir:
+            print("\nTest dataset:")
+            for study_type in ['cancer', 'non_cancer']:
+                study_dir = os.path.join(test_dir, study_type)
+                count = len(get_existing_nct_ids(study_dir)) if os.path.exists(study_dir) else 0
+                print(f"{study_type.title()}: {count} protocols")
+        
+        print(f"\nTotal new downloads: {total_downloads} (main) + {total_test_downloads} (test)")
 
     except Exception as e:
         print(f"An error occurred: {str(e)}")
