@@ -5,10 +5,11 @@ from torch.utils.data import Dataset
 import torch
 
 class ProtocolDataset(Dataset):
-    def __init__(self, texts, labels, tokenizer, max_length=512):
+    def __init__(self, texts, labels, tokenizer, file_paths=None, max_length=512):
         self.texts = texts
         self.labels = labels
         self.tokenizer = tokenizer
+        self.file_paths = file_paths if file_paths is not None else [''] * len(texts)
         self.max_length = max_length
 
     def __len__(self):
@@ -28,7 +29,8 @@ class ProtocolDataset(Dataset):
         return {
             'input_ids': encoding['input_ids'].flatten(),
             'attention_mask': encoding['attention_mask'].flatten(),
-            'labels': torch.tensor(self.labels[idx], dtype=torch.long)
+            'labels': torch.tensor(self.labels[idx], dtype=torch.long),
+            'file_path': self.file_paths[idx]
         }
 
 def preprocess_text(text):
@@ -96,6 +98,7 @@ def load_dataset(protocol_dir, debug=False, debug_samples=5):
     """
     texts = []
     labels = []
+    file_paths = []
     
     # Assuming cancer-relevant protocols are in a subdirectory named 'cancer'
     # and non-relevant ones are in 'non_cancer'
@@ -119,6 +122,7 @@ def load_dataset(protocol_dir, debug=False, debug_samples=5):
                 if text.strip():  # Only add if text is not empty after cleaning
                     texts.append(text)
                     labels.append(1)
+                    file_paths.append(os.path.abspath(file_path))
                 else:
                     print(f"Warning: Empty text after preprocessing in {filename}")
             except Exception as e:
@@ -137,6 +141,7 @@ def load_dataset(protocol_dir, debug=False, debug_samples=5):
                 if text.strip():  # Only add if text is not empty after cleaning
                     texts.append(text)
                     labels.append(0)
+                    file_paths.append(os.path.abspath(file_path))
                 else:
                     print(f"Warning: Empty text after preprocessing in {filename}")
             except Exception as e:
@@ -146,4 +151,4 @@ def load_dataset(protocol_dir, debug=False, debug_samples=5):
     print(f"- Cancer protocols: {sum(labels)}")
     print(f"- Non-cancer protocols: {len(labels) - sum(labels)}")
     
-    return texts, labels
+    return texts, labels, file_paths
