@@ -5,16 +5,15 @@ import sys
 from pathlib import Path
 import pandas as pd
 from datetime import datetime
-from sklearn.metrics import precision_recall_fscore_support, accuracy_score
 from tqdm import tqdm
 
 # Add the root directory to Python path
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(root_dir)
 
-from train_models import train_bert_model, load_data_from_directory, BERTClassifier
+from train_models import train_bert_model
 from utils.text_extractor import get_extractor
-from evaluate_models import ProtocolClassifierEnsemble
+from evaluate_models import ProtocolEvaluator
 
 def setup_logging():
     logging.basicConfig(
@@ -23,32 +22,17 @@ def setup_logging():
     )
     return logging.getLogger(__name__)
 
-def load_sampled_data(base_dir, extractor, split, sample_size):
+def process_all_data(base_dir, extractor, split):
     """
-    Load a sampled subset of data efficiently by sampling file paths first,
-    then only processing the selected files.
+    Process all PDF files in a directory once and cache the results.
     """
     logger = logging.getLogger(__name__)
     data = []
     
-    # Get cancer files
+    # Process cancer files
     cancer_dir = Path(base_dir) / 'cancer' / split
-    cancer_files = list(cancer_dir.glob('*.pdf'))
-    
-    # Get non-cancer files
-    non_cancer_dir = Path(base_dir) / 'non_cancer' / split
-    non_cancer_files = list(non_cancer_dir.glob('*.pdf'))
-    
-    # Calculate how many files to sample from each class (50-50 split)
-    samples_per_class = sample_size // 2
-    
-    # Sample files from each class
-    sampled_cancer = pd.Series(cancer_files).sample(n=min(samples_per_class, len(cancer_files)), random_state=42)
-    sampled_non_cancer = pd.Series(non_cancer_files).sample(n=min(samples_per_class, len(non_cancer_files)), random_state=42)
-    
-    # Process only the sampled cancer files
-    logger.info(f"Processing {len(sampled_cancer)} sampled cancer protocols")
-    for pdf_path in tqdm(sampled_cancer, desc=f"Processing sampled cancer protocols ({split})"):
+    logger.info(f"Processing all cancer protocols in {split} split")
+    for pdf_path in tqdm(list(cancer_dir.glob('*.pdf')), desc=f"Processing cancer protocols ({split})"):
         result = extractor.extract_from_pdf(pdf_path)
         if result["full_text"]:
             data.append({
@@ -57,9 +41,10 @@ def load_sampled_data(base_dir, extractor, split, sample_size):
                 'file_name': pdf_path.name
             })
     
-    # Process only the sampled non-cancer files
-    logger.info(f"Processing {len(sampled_non_cancer)} sampled non-cancer protocols")
-    for pdf_path in tqdm(sampled_non_cancer, desc=f"Processing sampled non-cancer protocols ({split})"):
+    # Process non-cancer files
+    non_cancer_dir = Path(base_dir) / 'non_cancer' / split
+    logger.info(f"Processing all non-cancer protocols in {split} split")
+    for pdf_path in tqdm(list(non_cancer_dir.glob('*.pdf')), desc=f"Processing non-cancer protocols ({split})"):
         result = extractor.extract_from_pdf(pdf_path)
         if result["full_text"]:
             data.append({
@@ -68,20 +53,40 @@ def load_sampled_data(base_dir, extractor, split, sample_size):
                 'file_name': pdf_path.name
             })
     
-    # Convert to DataFrame and shuffle
-    df = pd.DataFrame(data)
-    df = df.sample(frac=1, random_state=42).reset_index(drop=True)
+    return pd.DataFrame(data)
+
+def sample_from_processed_data(df, sample_size):
+    """
+    Sample balanced dataset from already processed data.
+    """
+    samples_per_class = sample_size // 2
     
-    logger.info(f"Final sampled dataset size: {len(df)}")
-    return df
+    cancer_df = df[df['label'] == 1].sample(n=min(samples_per_class, len(df[df['label'] == 1])), random_state=42)
+    non_cancer_df = df[df['label'] == 0].sample(n=min(samples_per_class, len(df[df['label'] == 0])), random_state=42)
+    
+    return pd.concat([cancer_df, non_cancer_df]).sample(frac=1, random_state=42).reset_index(drop=True)
 
 def run_experiment(dataset_sizes, base_dir, output_base_dir):
     logger = setup_logging()
     extractor = get_extractor("simple")
     
-    # Load validation and test data only once
-    val_df = load_data_from_directory(base_dir, extractor, "val")
-    test_df = load_data_from_directory(base_dir, extractor, "test")
+    # Process all data once
+    logger.info("Processing all training data once...")
+    full_train_df = process_all_data(base_dir, extractor, "train")
+    
+    logger.info("Processing validation data...")
+    val_df = process_all_data(base_dir, extractor, "val")
+    
+    logger.info("Processing test data...")
+    test_df = process_all_data(base_dir, extractor, "test")
+    
+    # Cache the processed data
+    cache_dir = os.path.join(output_base_dir, "processed_data_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    full_train_df.to_parquet(os.path.join(cache_dir, "full_train.parquet"))
+    val_df.to_parquet(os.path.join(cache_dir, "val.parquet"))
+    test_df.to_parquet(os.path.join(cache_dir, "test.parquet"))
     
     results = []
     
@@ -90,8 +95,8 @@ def run_experiment(dataset_sizes, base_dir, output_base_dir):
         logger.info(f"Running experiment with dataset size: {size}")
         logger.info(f"{'='*50}")
         
-        # Use the new efficient loading function
-        sampled_train_df = load_sampled_data(base_dir, extractor, "train", size)
+        # Sample from processed data
+        sampled_train_df = sample_from_processed_data(full_train_df, size)
         
         # Create experiment-specific output directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -114,61 +119,32 @@ def run_experiment(dataset_sizes, base_dir, output_base_dir):
             early_stopping_patience=3
         )
         
-        # Evaluate the model
-        class SingleModelEnsemble(ProtocolClassifierEnsemble):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                # Keep only PubMedBERT model and make sure it's loaded from the correct directory
-                model_path = os.path.join(output_dir)  # Use the specific experiment output directory
-                self.classifiers = {
-                    'pubmedbert': BERTClassifier(
-                        model_type='pubmedbert',
-                        model_path=model_path,
-                        max_length=512,
-                        extractor_type="simple"
-                    )
-                }
-
-        ensemble = SingleModelEnsemble(
-            trained_models_dir=output_dir,  # Use the specific experiment output directory
-            max_length=512,
-            extractor_type="simple"
-        )
+        # Initialize evaluator
+        evaluator = ProtocolEvaluator(output_dir)
         
-        # Evaluate on test set
+        # Evaluate on test sets
         test_cancer_dir = "../ppp_docs"
         test_non_cancer_dir = "./protocol_documents/non_cancer/test"
         
-        # Get predictions for both cancer and non-cancer
-        cancer_metrics, cancer_preds = ensemble.evaluate_directory(test_cancer_dir, "cancer")
-        non_cancer_metrics, non_cancer_preds = ensemble.evaluate_directory(test_non_cancer_dir, "non_cancer")
+        cancer_results = evaluator.evaluate_directory(Path(test_cancer_dir), is_cancer=True)
+        non_cancer_results = evaluator.evaluate_directory(Path(test_non_cancer_dir), is_cancer=False)
+        all_results = cancer_results + non_cancer_results
         
-        # Combine predictions and true labels
-        y_true = [1] * len(cancer_preds['pubmedbert']) + [0] * len(non_cancer_preds['pubmedbert'])
-        y_pred = cancer_preds['pubmedbert'] + non_cancer_preds['pubmedbert']
-        
-        # Calculate combined metrics
-        precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average='binary', zero_division=0)
-        accuracy = accuracy_score(y_true, y_pred)
-        
-        metrics = {
-            'accuracy': round(accuracy * 100, 2),
-            'precision': round(precision * 100, 2),
-            'recall': round(recall * 100, 2),
-            'f1': round(f1 * 100, 2)
-        }
+        # Calculate metrics
+        metrics = evaluator.calculate_metrics(all_results)
         
         # Store results
-        results.append({
+        result = {
             "dataset_size": size,
             "output_dir": output_dir,
-            "metrics": metrics
-        })
+            "metrics": metrics['pubmedbert']  # We only care about PubMedBERT metrics for this experiment
+        }
+        results.append(result)
         
-        # Save results after each experiment
+        # Save detailed results after each experiment
         with open(os.path.join(output_base_dir, "experiment_results.txt"), "a") as f:
             f.write(f"\nResults for dataset size {size}:\n")
-            f.write(f"Metrics: {metrics}\n")
+            f.write(f"Metrics: {metrics['pubmedbert']}\n")
             f.write("-" * 50 + "\n")
     
     return results
@@ -179,16 +155,13 @@ def main():
                       help="Base directory containing the dataset")
     parser.add_argument("--output_dir", type=str, default="./experiment_results",
                       help="Directory to save experiment results")
+    parser.add_argument("--use_cached_data", action="store_true",
+                      help="Use cached processed data if available")
     args = parser.parse_args()
 
-    # Testing a wide range of sizes from 200 to 8000
-    # Using roughly logarithmic scale to get good coverage
     dataset_sizes = [200, 400, 800, 1600, 3200, 4800, 6400, 8000]
-    
-    # Create output directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # Write experiment configuration
     with open(os.path.join(args.output_dir, "experiment_config.txt"), "w") as f:
         f.write("Dataset Size Experiment Configuration:\n")
         f.write(f"Dataset sizes tested: {dataset_sizes}\n")
