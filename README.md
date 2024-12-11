@@ -6,14 +6,32 @@ A deep learning system that uses PubMedBERT to classify clinical trial protocols
 
 ### 1. Download Protocol Documents
 ```bash
-# Download the recommended dataset size (750 protocols per category)
-python download_protocols.py --target-size 750
+# Download the default dataset (750 protocols per category for training, 100 for testing)
+python download_protocols.py
 
 # For a smaller dataset during development
-python download_protocols.py --target-size 100 --output-dir protocol_documents_dev
+python download_protocols.py --train-size 100 --test-size 20
+
+# Skip downloading test set
+python download_protocols.py --no-test
 ```
 
-### 2. Train Model
+### 2. Verify Dataset
+```bash
+# Verify dataset integrity and label correctness
+python verify_dataset.py
+
+# Use custom directories
+python verify_dataset.py --train-dir custom_train_dir --test-dir custom_test_dir
+```
+
+The verification process checks:
+- Directory structure and dataset sizes
+- No overlap between train/test sets
+- Label correctness using rule-based classification
+- Generates a comprehensive report
+
+### 3. Train Model
 ```bash
 # Basic training
 python train_classifier.py
@@ -22,7 +40,7 @@ python train_classifier.py
 python train_classifier.py --debug
 ```
 
-### 3. Evaluate Model
+### 4. Evaluate Model
 ```bash
 # Basic evaluation
 python evaluate_model.py
@@ -45,10 +63,9 @@ protocol_documents_test/     # Test data (optional)
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--target-size` | 1500 | Number of protocols to download per category |
-| `--test-size` | None | Number of protocols for test set (if specified) |
-| `--output-dir` | protocol_documents | Directory for main dataset |
-| `--test-dir` | protocol_documents_test | Directory for test dataset |
+| `--train-size` | 750 | Number of protocols to download per category for training |
+| `--test-size` | 100 | Number of protocols to download per category for testing |
+| `--no-test` | False | Skip downloading test set |
 | `--force-download` | False | Force re-download of existing files |
 | `--exclude-dirs` | [] | Additional directories to check for existing NCT IDs |
 

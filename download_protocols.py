@@ -182,10 +182,12 @@ def process_studies(api, study_type, target_size, base_dir, force_download=False
 
 def main():
     parser = argparse.ArgumentParser(description='Download ClinicalTrials.gov protocol documents')
-    parser.add_argument('--target-size', type=int, default=750,
-                      help='Target number of protocols per type (cancer/non-cancer) (default: 750)')
-    parser.add_argument('--test-size', type=int, default=None,
-                      help='If specified, download this many protocols for each type into a separate test directory')
+    parser.add_argument('--train-size', type=int, default=750,
+                      help='Target number of protocols per type (cancer/non-cancer) for training (default: 750)')
+    parser.add_argument('--test-size', type=int, default=100,
+                      help='Target number of protocols per type (cancer/non-cancer) for testing (default: 100)')
+    parser.add_argument('--no-test', action='store_true',
+                      help='Skip downloading test set')
     parser.add_argument('--force-download', action='store_true',
                       help='Force re-download of existing files')
     parser.add_argument('--output-dir', type=str, default="protocol_documents",
@@ -197,7 +199,7 @@ def main():
     args = parser.parse_args()
 
     base_dir = args.output_dir
-    test_dir = args.test_dir if args.test_size else None
+    test_dir = args.test_dir if not args.no_test else None
     os.makedirs(base_dir, exist_ok=True)
     if test_dir:
         os.makedirs(test_dir, exist_ok=True)
@@ -219,11 +221,11 @@ def main():
         total_test_downloads = 0
         
         for study_type in ['cancer', 'non_cancer']:
-            print(f"\nProcessing {study_type} studies (target: {args.target_size})...")
+            print(f"\nProcessing {study_type} studies (target: {args.train_size})...")
             
             # Download main dataset
             success_count = process_studies(
-                api, study_type, args.target_size, base_dir, 
+                api, study_type, args.train_size, base_dir, 
                 force_download=args.force_download,
                 existing_nct_ids=existing_nct_ids
             )
@@ -233,7 +235,7 @@ def main():
                 print(f"\nNewly downloaded {study_type} protocols: {success_count}")
             
             # Download test dataset if requested
-            if args.test_size:
+            if test_dir:
                 print(f"\nProcessing {study_type} test studies (target: {args.test_size})...")
                 test_success_count = process_studies(
                     api, study_type, args.test_size, test_dir,
