@@ -58,7 +58,7 @@ def main():
     model = model.to(device)
 
     # Load and split dataset
-    texts, labels = load_dataset('protocol_documents', debug=args.debug, debug_samples=args.debug_samples)
+    texts, labels, _ = load_dataset('protocol_documents', debug=args.debug, debug_samples=args.debug_samples)
     train_texts, val_texts, train_labels, val_labels = train_test_split(
         texts, labels, test_size=0.2, random_state=42
     )
