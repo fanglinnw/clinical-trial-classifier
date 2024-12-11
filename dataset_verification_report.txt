@@ -1,0 +1,81 @@
+Dataset Verification Report
+=========================
+
+1. Directory Structure Check
+==========================
+Training directory: ✓ exists
+Training cancer directory: ✓ exists
+Training non-cancer directory: ✓ exists
+Test directory: ✓ exists
+Test cancer directory: ✓ exists
+Test non-cancer directory: ✓ exists
+
+2. Dataset Size Check
+===================
+Training directory: 0 files
+Training cancer directory: 2000 files
+Training non-cancer directory: 2000 files
+Test directory: 0 files
+Test cancer directory: 500 files
+Test non-cancer directory: 500 files
+
+3. Dataset Overlap Check
+======================
+✓ No overlaps found between any directories
+
+4. Label Verification
+===================
+
+Training Dataset:
+Total documents: 3931
+Label agreement rate: 82.8%
+
+Potential mislabeled documents:
+
+- NCT03246529_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.12)
+
+- NCT03142334_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.25)
+
+- NCT03510273_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.00)
+
+- NCT03146663_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.28)
+
+- NCT03570892_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.23)
+
+- NCT04351334_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.10)
+
+- NCT01959139_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.00)
+
+- NCT03330769_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.00)
+
+- NCT03502148_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.20)
+
+- NCT03613727_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.23)
+... and 666 more
+
+Test Dataset:
+Total documents: 977
+Label agreement rate: 81.3%
+
+Potential mislabeled documents:
+
+- NCT03259035_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.28)
+
+- NCT05935189_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.17)
+
+- NCT04647110_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.28)
+
+- NCT04432727_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.23)
+
+- NCT06256172_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.00)
+
+- NCT04938180_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.10)
+
+- NCT04942665_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.05)
+
+- NCT04229030_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.00)
+
+- NCT00783367_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.28)
+
+- NCT03503162_protocol.pdf: Expected Cancer, Predicted Non-cancer (confidence: 0.00)
+... and 173 more
