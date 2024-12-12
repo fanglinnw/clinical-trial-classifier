@@ -61,6 +61,9 @@ def preprocess_text(text):
 
 def read_pdf(file_path, max_chars=8000):
     """Extract text from first few pages of a PDF file until we reach max_chars."""
+    # Suppress MuPDF warnings
+    fitz.TOOLS.mupdf_display_errors = False
+    
     doc = fitz.open(file_path)
     text = ""
     total_text = ""  # Store complete text to check truncation ratio
@@ -99,6 +102,7 @@ def load_dataset(protocol_dir, debug=False, debug_samples=5):
     texts = []
     labels = []
     file_paths = []
+    empty_files = []
     
     # Assuming cancer-relevant protocols are in a subdirectory named 'cancer'
     # and non-relevant ones are in 'non_cancer'
@@ -124,7 +128,7 @@ def load_dataset(protocol_dir, debug=False, debug_samples=5):
                     labels.append(1)
                     file_paths.append(os.path.abspath(file_path))
                 else:
-                    print(f"Warning: Empty text after preprocessing in {filename}")
+                    empty_files.append(filename)
             except Exception as e:
                 print(f"Error processing {filename}: {str(e)}")
     
@@ -143,12 +147,14 @@ def load_dataset(protocol_dir, debug=False, debug_samples=5):
                     labels.append(0)
                     file_paths.append(os.path.abspath(file_path))
                 else:
-                    print(f"Warning: Empty text after preprocessing in {filename}")
+                    empty_files.append(filename)
             except Exception as e:
                 print(f"Error processing {filename}: {str(e)}")
     
     print(f"\nLoaded {len(texts)} total documents:")
     print(f"- Cancer protocols: {sum(labels)}")
     print(f"- Non-cancer protocols: {len(labels) - sum(labels)}")
+    if empty_files:
+        print(f"- Skipped {len(empty_files)} empty files")
     
     return texts, labels, file_paths
