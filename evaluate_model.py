@@ -40,9 +40,31 @@ def evaluate_model(model, dataset, device, batch_size=8):
 
 def evaluate_zero_shot(texts, device):
     """Evaluate using zero-shot classification with RoBERTa."""
-    classifier = pipeline("zero-shot-classification",
-                        model="roberta-large-mnli",
-                        device=0 if device.type == 'cuda' else -1)
+    # Determine device for pipeline
+    if device.type == 'cuda':
+        pipeline_device = 0  # Use CUDA
+    elif device.type == 'mps':
+        try:
+            # Try to use MPS
+            pipeline_device = 'mps'
+        except Exception as e:
+            print(f"Warning: MPS device detected but encountered error: {e}")
+            print("Falling back to CPU for zero-shot classification")
+            pipeline_device = -1
+    else:
+        pipeline_device = -1  # Use CPU
+
+    print(f"\nInitializing zero-shot classifier on device: {pipeline_device}")
+    
+    try:
+        classifier = pipeline("zero-shot-classification",
+                            model="roberta-large-mnli",
+                            device=pipeline_device)
+    except Exception as e:
+        print(f"Error initializing pipeline on {pipeline_device}, falling back to CPU: {e}")
+        classifier = pipeline("zero-shot-classification",
+                            model="roberta-large-mnli",
+                            device=-1)
     
     candidate_labels = ["clinical trial not related to cancer research", "clinical trial focused on cancer research"]
     hypothesis_template = "This clinical trial protocol describes a {}."
