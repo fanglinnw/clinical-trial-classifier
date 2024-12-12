@@ -1,6 +1,6 @@
 # Clinical Trial Protocol Classifier
 
-A deep learning system that uses PubMedBERT to classify clinical trial protocols as cancer-relevant or not relevant.
+A deep learning system that uses PubMedBERT and LLM-based classifiers to classify clinical trial protocols as cancer-relevant or not relevant.
 
 ## 🚀 Quickstart
 
@@ -16,7 +16,18 @@ python download_protocols.py --train-size 100 --test-size 20
 python download_protocols.py --no-test
 ```
 
-### 2. Verify Dataset
+### 2. Balance Dataset (Optional)
+```bash
+# Balance the number of protocols between cancer and non-cancer categories
+python balance_datasets.py
+```
+
+The balancing process:
+- Counts files in cancer and non-cancer directories
+- If non-cancer has more files, randomly removes excess files to match cancer count
+- Ensures equal representation of both categories
+
+### 3. Verify Dataset
 ```bash
 # Verify dataset integrity and label correctness
 python verify_dataset.py
@@ -31,16 +42,30 @@ The verification process checks:
 - Label correctness using rule-based classification
 - Generates a comprehensive report
 
-### 3. Train Model
+### 4. Train Model
 ```bash
-# Basic training
+# Train using PubMedBERT classifier
 python train_classifier.py
 
 # Quick test run with debug mode
 python train_classifier.py --debug
 ```
 
-### 4. Evaluate Model
+### 5. Alternative: Use LLM Classifier
+```bash
+# Use Mistral-based LLM classifier
+python llm_classifier.py
+
+# Run with specific directories
+python llm_classifier.py --train-dir custom_train_dir --test-dir custom_test_dir
+```
+
+The LLM classifier:
+- Uses Mistral-7B-Instruct-v0.2 for classification
+- Provides detailed predictions and confidence scores
+- Generates comprehensive evaluation metrics
+
+### 6. Evaluate Model
 ```bash
 # Basic evaluation
 python evaluate_model.py
@@ -71,6 +96,13 @@ protocol_documents_test/     # Test data (optional)
 | `--force-download` | False | Force re-download of existing files |
 | `--exclude-dirs` | [] | Additional directories to check for existing NCT IDs |
 
+### Balance Dataset (`balance_datasets.py`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--cancer-dir` | protocol_documents/cancer | Directory containing cancer protocols |
+| `--non-cancer-dir` | protocol_documents/non_cancer | Directory containing non-cancer protocols |
+
 ### Verify Dataset (`verify_dataset.py`)
 
 | Option | Default | Description |
@@ -89,6 +121,15 @@ protocol_documents_test/     # Test data (optional)
 | `--debug-samples` | 5 | Number of samples per class in debug mode |
 | `--epochs` | 5 | Number of training epochs |
 | `--learning-rate` | 1e-5 | Learning rate for training |
+
+### LLM Classifier (`llm_classifier.py`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--train-dir` | protocol_documents | Directory containing training data |
+| `--test-dir` | protocol_documents_test | Directory containing test data |
+| `--output-dir` | evaluation_results | Directory to save results |
+| `--batch-size` | 8 | Batch size for evaluation |
 
 ### Evaluate Model (`evaluate_model.py`)
 
@@ -119,56 +160,29 @@ Debug mode features:
 - More frequent logging
 - Faster iteration for testing changes
 
-## 🔬 Advanced Features
-
-### Label Verification (`verify_labels.py`)
-Verify and validate the dataset labels using a rule-based classifier:
-```bash
-python verify_labels.py --protocol-dir protocol_documents
-```
-
-The verification process:
-- Uses cancer-specific keywords and patterns
-- Identifies cancer-related treatments and procedures
-- Generates a detailed verification report
-
-### Learning Curve Analysis (`learning_curve_analysis.py`)
-Analyze model performance with varying training dataset sizes:
-```bash
-python learning_curve_analysis.py
-```
-
-Features:
-- Trains models with different subset sizes
-- Plots learning curves for accuracy and loss
-- Helps determine optimal dataset size
-
-### Dataset Balancing (`balance_datasets.py`)
-Balance the dataset between cancer and non-cancer protocols:
-```bash
-python balance_datasets.py
-```
-
 ## 💻 Hardware Support
 
 The system automatically detects and utilizes available hardware:
-- NVIDIA GPUs: Uses mixed precision training (fp16)
-- Apple M1 GPU: Uses MPS backend
-- CPU: Falls back to CPU with optimized batch sizes
+- CPU: Default execution mode
+- GPU: Automatically utilized when available (CUDA or MPS)
+- Memory optimization: Uses half-precision (fp16) when possible
 
 ## 📊 Evaluation Results
 
 Evaluation generates:
 1. Classification report with precision, recall, and F1 scores
 2. Confusion matrix visualization
-3. Detailed metrics saved to `evaluation_results/`
+3. Detailed predictions with confidence scores
+4. Results saved to `evaluation_results/`
 
 ## 📝 Notes
 
-- The system uses PubMedBERT which has a maximum token length of 512
-- Only the first ~8000 characters of each protocol are used for classification
+- The system provides two classification approaches:
+  1. PubMedBERT-based classification (traditional approach)
+  2. LLM-based classification using Mistral-7B (newer approach)
 - Text is automatically cleaned and preprocessed before training
-- Training automatically uses the best available hardware (NVIDIA GPU > Apple M1 > CPU)
+- Training automatically uses the best available hardware
+- Balanced datasets are recommended for optimal performance
 
 ## 🤝 Contributing
 
