@@ -2,6 +2,23 @@
 
 A deep learning system that uses PubMedBERT and LLM-based classifiers to classify clinical trial protocols as cancer-relevant or not relevant.
 
+## 🔧 Requirements
+
+- Python 3.10 (Required for PyTorch compatibility)
+- Virtual environment recommended
+
+```bash
+# Install Python 3.10 if not already installed
+brew install python@3.10
+
+# Create and activate virtual environment
+python3.10 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
 ## 🚀 Quickstart
 
 ### 1. Download Protocol Documents
