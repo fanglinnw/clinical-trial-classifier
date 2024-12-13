@@ -175,7 +175,7 @@ Confusion Matrix:
 - False Negatives: 34 (cancer protocols misclassified as non-cancer)
 - True Positives: 941 (correctly identified cancer protocols)
 
-### Zero-Shot LLM Performance
+### Zero-Shot RoBERTa-large-MNLI Model Performance
 - **Accuracy**: 87.1% (1699/1950 correct classifications)
 - **Precision**: 86.7% (855 true positives out of 986 predicted cancer protocols)
 - **Recall**: 87.7% (855 true positives out of 975 actual cancer protocols)
