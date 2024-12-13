@@ -60,6 +60,7 @@ llm_results/
 dataset_verification_report.txt
 confusion_matrix.png
 classification_report.txt
+size_experiment_results/
 
 # Temporary files
 *.tmp
