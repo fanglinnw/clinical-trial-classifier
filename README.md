@@ -159,6 +159,61 @@ protocol_documents_test/     # Test data (optional)
 | `--debug` | False | Run in debug mode |
 | `--debug-samples` | 5 | Number of samples per class in debug mode |
 
+## 📊 Evaluation Results
+
+Here are the evaluation results for our clinical trial protocol classifier, treating cancer protocols as the positive class:
+
+### PubMedBERT Model Performance
+- **Accuracy**: 95.5% (1863/1950 correct classifications)
+- **Precision**: 94.7% (941 true positives out of 994 predicted cancer protocols)
+- **Recall**: 96.5% (941 true positives out of 975 actual cancer protocols)
+- **F1-Score**: 95.6%
+
+Confusion Matrix:
+- True Negatives: 922 (correctly identified non-cancer protocols)
+- False Positives: 53 (non-cancer protocols misclassified as cancer)
+- False Negatives: 34 (cancer protocols misclassified as non-cancer)
+- True Positives: 941 (correctly identified cancer protocols)
+
+### Zero-Shot LLM Performance
+- **Accuracy**: 87.1% (1699/1950 correct classifications)
+- **Precision**: 86.7% (855 true positives out of 986 predicted cancer protocols)
+- **Recall**: 87.7% (855 true positives out of 975 actual cancer protocols)
+- **F1-Score**: 87.2%
+
+Confusion Matrix:
+- True Negatives: 844 (correctly identified non-cancer protocols)
+- False Positives: 131 (non-cancer protocols misclassified as cancer)
+- False Negatives: 120 (cancer protocols misclassified as non-cancer)
+- True Positives: 855 (correctly identified cancer protocols)
+
+### Key Findings
+- PubMedBERT model performs better than the zero-shot approach (95.5% vs 87.1% accuracy)
+- The model misses 34 cancer protocols (3.5% false negative rate)
+- Both approaches show similar precision and recall scores
+- Evaluation outputs include:
+  1. Detailed classification metrics
+  2. Confusion matrix visualizations
+  3. Confidence scores for each prediction
+  4. Complete results saved in `evaluation_results/`
+
+## 📝 Notes
+
+- The system provides two classification approaches:
+  1. PubMedBERT-based classification (traditional approach)
+  2. LLM-based classification using Mistral-7B (newer approach)
+- Text is automatically cleaned and preprocessed before training
+- Training automatically uses the best available hardware
+- Balanced datasets are recommended for optimal performance
+
+## 🤝 Contributing
+
+Feel free to open issues or submit pull requests for:
+- Bug fixes
+- Feature additions
+- Documentation improvements
+- Performance optimizations
+
 ## 🔍 Debug Mode
 
 Debug mode is available in both training and evaluation scripts for quick testing:
@@ -183,28 +238,3 @@ The system automatically detects and utilizes available hardware:
 - CPU: Default execution mode
 - GPU: Automatically utilized when available (CUDA or MPS)
 - Memory optimization: Uses half-precision (fp16) when possible
-
-## 📊 Evaluation Results
-
-Evaluation generates:
-1. Classification report with precision, recall, and F1 scores
-2. Confusion matrix visualization
-3. Detailed predictions with confidence scores
-4. Results saved to `evaluation_results/`
-
-## 📝 Notes
-
-- The system provides two classification approaches:
-  1. PubMedBERT-based classification (traditional approach)
-  2. LLM-based classification using Mistral-7B (newer approach)
-- Text is automatically cleaned and preprocessed before training
-- Training automatically uses the best available hardware
-- Balanced datasets are recommended for optimal performance
-
-## 🤝 Contributing
-
-Feel free to open issues or submit pull requests for:
-- Bug fixes
-- Feature additions
-- Documentation improvements
-- Performance optimizations

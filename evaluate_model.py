@@ -1,6 +1,6 @@
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
 import numpy as np
 import argparse
 import os
@@ -84,13 +84,38 @@ def evaluate_zero_shot(texts, device):
     
     return np.array(all_preds), np.array(all_probs)
 
+def calculate_binary_metrics(y_true, y_pred):
+    """Calculate binary classification metrics treating cancer (1) as positive class."""
+    cm = confusion_matrix(y_true, y_pred)
+    tn, fp, fn, tp = cm.ravel()
+    
+    accuracy = accuracy_score(y_true, y_pred)
+    precision = precision_score(y_true, y_pred)
+    recall = recall_score(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred)
+    
+    metrics_str = (
+        f"Binary Classification Metrics (Cancer as Positive Class):\n"
+        f"{'='*50}\n"
+        f"Accuracy:  {accuracy:.1%} ({tp + tn}/{len(y_true)} correct classifications)\n"
+        f"Precision: {precision:.1%} ({tp} true positives out of {tp + fp} predicted cancer protocols)\n"
+        f"Recall:    {recall:.1%} ({tp} true positives out of {tp + fn} actual cancer protocols)\n"
+        f"F1-Score:  {f1:.1%} (harmonic mean of precision and recall)\n\n"
+        f"Confusion Matrix:\n"
+        f"{'='*50}\n"
+        f"True Negatives (TN): {tn} | False Positives (FP): {fp}\n"
+        f"False Negatives (FN): {fn} | True Positives (TP): {tp}\n"
+    )
+    
+    return metrics_str, cm
+
 def plot_confusion_matrix(cm, save_path):
     """Plot and save confusion matrix."""
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
     plt.title('Confusion Matrix')
-    plt.ylabel('True Label')
-    plt.xlabel('Predicted Label')
+    plt.ylabel('True Label (0: Non-Cancer, 1: Cancer)')
+    plt.xlabel('Predicted Label (0: Non-Cancer, 1: Cancer)')
     plt.savefig(save_path)
     plt.close()
 
@@ -121,11 +146,11 @@ def main():
     if torch.cuda.is_available():
         device = torch.device('cuda')
         print(f"Using NVIDIA GPU: {torch.cuda.get_device_name(0)}")
-        batch_size = args.batch_size * 2  # Double batch size for GPU
+        batch_size = args.batch_size * 2
     elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
         device = torch.device('mps')
         print("Using Apple M1 GPU")
-        batch_size = args.batch_size * 2  # Double batch size for GPU
+        batch_size = args.batch_size * 2
     else:
         device = torch.device('cpu')
         print("Using CPU")
@@ -150,31 +175,25 @@ def main():
     print("\nEvaluating zero-shot classifier...")
     zero_shot_predictions, zero_shot_probabilities = evaluate_zero_shot(test_texts, device)
 
-    # Calculate and save metrics for fine-tuned model
-    print("\nFine-tuned Model Classification Report:")
-    report = classification_report(true_labels, predictions, target_names=['Non-Cancer', 'Cancer'])
-    print(report)
+    # Calculate and save metrics for both models
+    print("\nFine-tuned Model Results:")
+    finetuned_metrics, cm_finetuned = calculate_binary_metrics(true_labels, predictions)
+    print(finetuned_metrics)
 
-    # Calculate and save metrics for zero-shot model
-    print("\nZero-shot Model Classification Report:")
-    zero_shot_report = classification_report(test_labels, zero_shot_predictions, target_names=['Non-Cancer', 'Cancer'])
-    print(zero_shot_report)
+    print("\nZero-shot Model Results:")
+    zeroshot_metrics, cm_zeroshot = calculate_binary_metrics(test_labels, zero_shot_predictions)
+    print(zeroshot_metrics)
 
-    # Save classification reports
+    # Save metrics to file
     with open(os.path.join(args.output_dir, 'classification_report.txt'), 'w') as f:
         f.write("Fine-tuned Model Results:\n")
-        f.write("="*50 + "\n")
-        f.write(report)
-        f.write("\n\nZero-shot Model Results:\n")
-        f.write("="*50 + "\n")
-        f.write(zero_shot_report)
+        f.write(finetuned_metrics)
+        f.write("\nZero-shot Model Results:\n")
+        f.write(zeroshot_metrics)
 
     # Save confusion matrices
-    cm = confusion_matrix(true_labels, predictions)
-    plot_confusion_matrix(cm, os.path.join(args.output_dir, 'confusion_matrix_finetuned.png'))
-    
-    cm_zero_shot = confusion_matrix(test_labels, zero_shot_predictions)
-    plot_confusion_matrix(cm_zero_shot, os.path.join(args.output_dir, 'confusion_matrix_zeroshot.png'))
+    plot_confusion_matrix(cm_finetuned, os.path.join(args.output_dir, 'confusion_matrix_finetuned.png'))
+    plot_confusion_matrix(cm_zeroshot, os.path.join(args.output_dir, 'confusion_matrix_zeroshot.png'))
 
     # Save detailed predictions to CSV
     results_df = pd.DataFrame({
@@ -195,38 +214,16 @@ def main():
     print(f"\nDetailed predictions saved to: {csv_path}")
     
     # Print summary of incorrect predictions
-    incorrect_predictions = results_df[~results_df['finetuned_correct']].copy()  # Create an explicit copy
+    incorrect_predictions = results_df[~results_df['finetuned_correct']].copy()
     if len(incorrect_predictions) > 0:
         print("\nSummary of incorrect predictions:")
         print(f"Total incorrect predictions: {len(incorrect_predictions)}")
-        print("\nTop 5 most confident incorrect predictions:")
-        
-        # Calculate the maximum confidence for each prediction
-        incorrect_predictions.loc[:, 'max_confidence'] = incorrect_predictions.apply(
-            lambda x: max(x['finetuned_confidence_cancer'], x['finetuned_confidence_non_cancer']), axis=1
-        )
-        
-        # Show top 5 by confidence
-        for _, row in incorrect_predictions.nlargest(5, 'max_confidence').iterrows():
+        print("\nSample of incorrect predictions:")
+        for _, row in incorrect_predictions.head().iterrows():
             print(f"\nFile: {os.path.basename(row['file_path'])}")
             print(f"True label: {row['true_label']}")
-            print(f"Predicted: {row['finetuned_predicted']} (confidence: {row['max_confidence']:.2%})")
-            
-        # Add analysis of incorrect predictions
-        cancer_as_non = len(incorrect_predictions[
-            (incorrect_predictions['true_label'] == 'Cancer') & 
-            (incorrect_predictions['finetuned_predicted'] == 'Non-Cancer')
-        ])
-        non_as_cancer = len(incorrect_predictions[
-            (incorrect_predictions['true_label'] == 'Non-Cancer') & 
-            (incorrect_predictions['finetuned_predicted'] == 'Cancer')
-        ])
-        
-        print("\nBreakdown of incorrect predictions:")
-        print(f"Cancer protocols classified as Non-Cancer: {cancer_as_non}")
-        print(f"Non-Cancer protocols classified as Cancer: {non_as_cancer}")
-    
-    print(f"\nResults saved to {args.output_dir}/")
+            print(f"Predicted: {row['finetuned_predicted']}")
+            print(f"Confidence: {row['finetuned_confidence_cancer']:.2f}")
 
 if __name__ == "__main__":
     main()
